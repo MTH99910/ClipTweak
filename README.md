@@ -47,6 +47,19 @@ spaces. Keep the checkout in place. To uninstall the entry, remove
 `~/.local/share/applications/video-tint.desktop` (or the corresponding
 `$XDG_DATA_HOME` location).
 
+If the preview is blank or playback stays at 00:00, launch from a terminal to
+see the error at the bottom of the window. Audio startup is checked in a separate
+process with a timeout, so an inaccessible or stalled sound server cannot block
+video decoding. The player checks PipeWire, PulseAudio, then ALSA. If none works,
+video plays silently and the window reports why; saving still retains audio.
+You can select a backend explicitly:
+
+```sh
+VIDEOTINT_AUDIO=pipewire ./video-tint
+# Diagnostic: bypass audio entirely, while retaining audio in saved output.
+VIDEOTINT_AUDIO=null ./video-tint
+```
+
 Alternatively, install the Python package into a virtual environment:
 
 ```sh
@@ -165,7 +178,9 @@ attachments, extra video streams, and camera sidecars are not preserved.
 
 - Software decoding, filtering, and rendering deliberately avoid X11 embedding
   and GPU driver/Wayland context issues. Rendering runs on a separate thread;
-  libmpv control runs on another thread to avoid render-API deadlocks. The AMD
+  libmpv control runs on another thread to avoid render-API deadlocks.
+  Render-update callbacks wake the renderer, and frames have explicit opaque
+  alpha before they are passed to Qt/compositors. The AMD
   Radeon RX 6700 XT is not used for acceleration. Large/4K files may be CPU-bound.
 - HDR PQ/HLG files are rejected with a clear message. Output is SDR 8-bit H.264;
   high-bit-depth input loses precision. This is not a managed HDR grading tool.
@@ -204,14 +219,17 @@ QT_QPA_PLATFORM=offscreen VIDEOTINT_TEST_AUDIO=null \
 python scripts/smoke_test.py --interlaced
 ```
 
-The tests generate their own files in temporary directories. They cover filter
+The tests generate their own files in temporary directories. Audio regressions
+cover working backends, stalled servers, and a visible silent fallback. Run the
+GUI smoke test without `VIDEOTINT_TEST_AUDIO` to exercise normal audio startup.
+The generated samples still save their audio even when preview audio is unavailable. They cover filter
 mapping, natural sorting, paths with spaces/Unicode/shell characters, unique
 names, output locking, encode failure, cancellation, backup replacement, AC-3
 copying, PCM-to-AAC conversion, sample aspect ratio, rotation, full range,
 BT.709 tags, real interlaced H.264 MTS and remuxed MP4, missing-field-metadata
 `idet` detection, and variable frame intervals.
 
-The GUI smoke test actually plays through libmpv, changes a paused frame without
+The GUI smoke test checks the actual painted Qt preview surface and plays through libmpv, changes a paused frame without
 moving position, saves through the UI, compares a preview screenshot with a
 decoded saved frame using SSIM, checks asynchronous thumbnails/natural folder
 ordering, reopens the saved result, and checks per-file settings and export

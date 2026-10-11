@@ -1,12 +1,12 @@
 """Small ctypes libmpv binding. All decode/render work lives on a worker thread."""
 import ctypes as C
 import ctypes.util
-import os
 import queue
 import threading
 import time
 from PySide6.QtCore import QThread, Signal
 from PySide6.QtGui import QImage
+from .audio import select_audio_backend
 
 # Values from the public libmpv client/render headers.
 API_TYPE, SW_SIZE, SW_FORMAT, SW_STRIDE, SW_POINTER = 1, 17, 18, 19, 20
@@ -30,6 +30,7 @@ class Player(QThread):
     frame = Signal(QImage)
     status = Signal(float, float, bool)
     error = Signal(str)
+    notice = Signal(str)
 
     def __init__(self):
         super().__init__()
@@ -63,20 +64,39 @@ class Player(QThread):
             wait_event = bind('mpv_wait_event', C.POINTER(Event), C.c_void_p, C.c_double)
             request_logs = bind('mpv_request_log_messages', C.c_int, C.c_void_p, C.c_char_p)
             error_string = bind('mpv_error_string', C.c_char_p, C.c_int)
+            update_callback_type = C.CFUNCTYPE(None, C.c_void_p)
+            set_update_callback = bind(
+                'mpv_render_context_set_update_callback', None,
+                C.c_void_p, update_callback_type, C.c_void_p,
+            )
             handle = create()
             if not handle:
                 raise RuntimeError('Could not create a libmpv player')
             for k, v in {'vo': 'libmpv', 'hwdec': 'no', 'config': 'no', 'idle': 'yes', 'keep-open': 'yes', 'audio-display': 'no', 'deinterlace': 'no', 'input-default-bindings': 'no'}.items():
                 if option(handle, k.encode(), v.encode()) < 0:
                     raise RuntimeError('Unsupported mpv option: ' + k)
-            if os.environ.get('VIDEOTINT_TEST_AUDIO') == 'null':
+            backend, audio_notice = select_audio_backend()
+            if option(handle, b'ao', backend.encode()) < 0:
                 option(handle, b'ao', b'null')
+                audio_notice = 'Audio backend unsupported; preview is playing silently.'
+            if audio_notice:
+                self.notice.emit(audio_notice)
+            # A later device failure should disable sound rather than video.
+            option(handle, b'audio-fallback-to-null', b'yes')
             if init(handle) < 0:
                 raise RuntimeError('Could not initialize libmpv')
             request_logs(handle, b'error')
             ctx = C.c_void_p()
             if render_create(C.byref(ctx), handle, (Param * 2)(Param(API_TYPE, C.cast(C.c_char_p(b'sw'), C.c_void_p)), Param(0, None))) < 0:
                 raise RuntimeError('libmpv software renderer unavailable')
+
+            render_pending = threading.Event()
+            # Retain the ctypes callback until the render context is freed.
+            # Callbacks only wake our renderer; calling mpv here can deadlock.
+            @update_callback_type
+            def on_render_update(_):
+                render_pending.set()
+            set_update_callback(ctx, on_render_update, None)
 
             def control_loop():
                 """Never block the render thread on normal libmpv commands or properties."""
@@ -125,12 +145,18 @@ class Player(QThread):
                     pitch = C.c_size_t(stride)
                     params = (Param * 5)(Param(SW_SIZE, C.cast(dims, C.c_void_p)), Param(SW_FORMAT, C.cast(C.c_char_p(b'bgr0'), C.c_void_p)), Param(SW_STRIDE, C.cast(C.pointer(pitch), C.c_void_p)), Param(SW_POINTER, ptr), Param(0, None))
                     last_size = size
+                render_pending.clear()
+                # Poll as a fallback too: an event can arrive just before clear().
                 if update(ctx) & 1 or changed:
                     if render(ctx, params) < 0:
                         raise RuntimeError('Video rendering failed')
-                    img = QImage(C.string_at(ptr, stride * h), w, h, stride, QImage.Format.Format_RGB32).copy()
+                    pixels = bytearray(C.string_at(ptr, stride * h))
+                    # mpv's bgr0 padding byte is undefined; Qt RGB32 requires
+                    # opaque 0xff. Never upload zero/garbage alpha to a compositor.
+                    pixels[3::4] = b'\xff' * (len(pixels) // 4)
+                    img = QImage(pixels, w, h, stride, QImage.Format.Format_RGB32).copy()
                     self.frame.emit(img)
-                self.msleep(15)
+                render_pending.wait(.015)
         except Exception as e:
             self.error.emit(str(e))
         finally:

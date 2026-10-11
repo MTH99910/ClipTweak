@@ -49,6 +49,14 @@ def check():
             window.player.command('set', 'pause', 'yes')
             state.update(stage=1, wait=time.monotonic())
         elif stage == 1 and time.monotonic() - state['wait'] > 0.5:
+            # Check the actual QWidget surface, not just mpv screenshots.
+            image = window.preview.image
+            assert all(value == 255 for value in bytes(image.bits())[3::4]), 'Undefined frame alpha'
+            painted = window.preview.grab().toImage()
+            colors = {painted.pixelColor(x, y).rgb()
+                      for x in range(0, painted.width(), max(1, painted.width()//20))
+                      for y in range(0, painted.height(), max(1, painted.height()//20))}
+            assert len(colors) > 10, 'Qt preview widget painted a blank surface'
             state['before'] = window.preview.image.copy()
             state['frames_before'] = state['frames']
             state['position'] = window.seek.value()

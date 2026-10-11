@@ -90,6 +90,8 @@ class Window(QMainWindow):
         self.exporter = None
         self.saved = None
         self.comparing = False
+        self.playback_notice = ''
+        self.playback_failure = ''
         self.preferences = QSettings('VideoTint', 'VideoTint')
         root = QWidget()
         self.setCentralWidget(root)
@@ -192,7 +194,8 @@ class Window(QMainWindow):
         self.open_saved.hide()
         self.player.frame.connect(self.draw)
         self.player.status.connect(self.status)
-        self.player.error.connect(self.report)
+        self.player.error.connect(self.playback_error)
+        self.player.notice.connect(self.audio_notice)
         self.filter_timer = QTimer(self)
         self.filter_timer.setSingleShot(True)
         self.filter_timer.setInterval(70)
@@ -230,6 +233,14 @@ class Window(QMainWindow):
     def report(self, error):
         self.message.setText(error if len(error) < 320 else error[-320:])
         self.message.setToolTip(error)
+
+    def playback_error(self, error):
+        self.playback_failure = error
+        self.report(error)
+
+    def audio_notice(self, message):
+        self.playback_notice = message
+        self.report(message)
 
     def draw(self, image):
         self.preview.image = image
@@ -286,12 +297,16 @@ class Window(QMainWindow):
             self.comparing = False
             self.compare.setText('Hold to compare original')
             self.restore()
+            if self.player.isRunning():
+                self.playback_failure = ''
             self.player.command('set', 'vf', self.preview_filter())
             self.player.command('loadfile', str(path), 'replace')
             self.player.command('set', 'pause', 'no')
             self.title.setText(path.name)
             self.apply.setEnabled(self.exporter is None)
             self.message.setText('Saved result loaded with neutral settings: ' + path.name if path == self.saved else 'Interlaced: frame-rate-preserving BWDIF in preview and save' if self.info['interlaced'] else 'Ready — SDR video')
+            if self.playback_failure or self.playback_notice:
+                self.report(self.playback_failure or self.playback_notice)
             self.populate()
         self.submit(inspect, ready, failed=lambda e: self.report(e) if token == self.loading_id else None)
 
