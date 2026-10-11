@@ -1,6 +1,7 @@
 """Small ctypes libmpv binding. All decode/render work lives on a worker thread."""
 import ctypes as C
 import ctypes.util
+import locale
 import queue
 import threading
 import time
@@ -37,7 +38,18 @@ class Player(QThread):
         self.commands = queue.Queue()
         self.running = True
         self.size = (960, 540)
-        self.diagnostics = {'stage': 'Starting', 'rendered_frames': 0}
+        # QApplication/platform plugins can set the C runtime's numeric locale.
+        # libmpv rejects regional locales even when their decimal separator is '.'.
+        # Do this on the creating (GUI) thread, before starting any player work,
+        # and retain it for mpv's lifetime. LC_CTYPE/Unicode and other categories
+        # are deliberately untouched, as is Qt's separate QLocale formatting.
+        previous_numeric_locale = locale.setlocale(locale.LC_NUMERIC)
+        numeric_locale = locale.setlocale(locale.LC_NUMERIC, 'C')
+        self.diagnostics = {
+            'stage': 'Starting', 'rendered_frames': 0,
+            'numeric_locale_before': previous_numeric_locale,
+            'numeric_locale': numeric_locale,
+        }
 
     def command(self, *args):
         self.commands.put(tuple((str(x) for x in args)))
@@ -72,9 +84,11 @@ class Player(QThread):
                 'mpv_render_context_set_update_callback', None,
                 C.c_void_p, update_callback_type, C.c_void_p,
             )
+            self.diagnostics['numeric_locale_at_create'] = locale.setlocale(locale.LC_NUMERIC)
             handle = create()
             if not handle:
-                raise RuntimeError('Could not create a libmpv player')
+                raise RuntimeError('Could not create a libmpv player ' +
+                                   '(numeric locale: ' + locale.setlocale(locale.LC_NUMERIC) + ')')
             for k, v in {'vo': 'libmpv', 'hwdec': 'no', 'config': 'no', 'idle': 'yes', 'keep-open': 'yes', 'audio-display': 'no', 'deinterlace': 'no', 'input-default-bindings': 'no'}.items():
                 if option(handle, k.encode(), v.encode()) < 0:
                     raise RuntimeError('Unsupported mpv option: ' + k)

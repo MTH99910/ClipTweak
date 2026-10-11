@@ -27,6 +27,9 @@ next_source = source.with_name('Sony sample 日本 $ 10' + extension)
 shutil.copyfile(source, next_source)
 app = QApplication([])
 configure_application(app)
+if '--desktop-locale' in sys.argv:
+    import locale
+    locale.setlocale(locale.LC_NUMERIC, 'en_GB.UTF-8')
 window = Window()
 window.resize(900, 600)
 window.show()

@@ -47,6 +47,12 @@ spaces. Keep the checkout in place. To uninstall the entry, remove
 `~/.local/share/applications/video-tint.desktop` (or the corresponding
 `$XDG_DATA_HOME` location).
 
+Qt's desktop/platform initialization can select a regional C-runtime numeric
+locale. libmpv refuses to create a player unless `LC_NUMERIC` is `C`; Video Tint
+sets that category inside its process after Qt initializes and before starting
+its player. Other locale categories and Unicode path handling are preserved.
+This follows [mpv's Qt initialization example](https://github.com/mpv-player/mpv-examples/blob/master/libmpv/qt/qtexample.cpp).
+
 For a blank preview, click **Diagnostics**. The report includes the actual
 application path/version, Qt platform, player state, received frames, paint events,
 and sampled frame colors. **Copy report** copies it to the clipboard. **Test
@@ -228,7 +234,10 @@ python scripts/smoke_test.py --interlaced
 ```
 
 The tests generate their own files in temporary directories. Audio regressions
-cover working backends, stalled servers, and a visible silent fallback. Run the
+cover working backends, stalled servers, and a visible silent fallback. A real
+libmpv regression reproduces null-player creation under `en_GB.UTF-8` and checks
+that the numeric-locale reset allows successful creation without changing other
+locale categories. Run the
 GUI smoke test without `VIDEOTINT_TEST_AUDIO` to exercise normal audio startup.
 The generated samples still save their audio even when preview audio is unavailable. They cover filter
 mapping, natural sorting, paths with spaces/Unicode/shell characters, unique
@@ -274,3 +283,11 @@ GPL requirements where applicable.
 Reference behavior is documented in the [mpv render API](https://github.com/mpv-player/mpv/blob/master/include/mpv/render.h)
 and [FFmpeg filter documentation](https://ffmpeg.org/ffmpeg-filters.html).
 See [PUBLISHING.md](PUBLISHING.md) for the remaining GitHub publication commands.
+
+For the full GUI smoke test under the previously failing desktop numeric locale
+(on a system with `en_GB.UTF-8` installed):
+
+```sh
+QT_QPA_PLATFORM=offscreen XDG_CACHE_HOME=/tmp/video-tint-test-cache \
+python scripts/smoke_test.py --desktop-locale
+```
