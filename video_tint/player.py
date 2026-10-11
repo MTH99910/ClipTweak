@@ -37,6 +37,7 @@ class Player(QThread):
         self.commands = queue.Queue()
         self.running = True
         self.size = (960, 540)
+        self.diagnostics = {'stage': 'Starting', 'rendered_frames': 0}
 
     def command(self, *args):
         self.commands.put(tuple((str(x) for x in args)))
@@ -44,7 +45,9 @@ class Player(QThread):
     def run(self):
         ctx = handle = control = None
         try:
-            lib = C.CDLL(ctypes.util.find_library('mpv') or 'libmpv.so.2')
+            library = ctypes.util.find_library('mpv') or 'libmpv.so.2'
+            self.diagnostics['library'] = library
+            lib = C.CDLL(library)
 
             def bind(name, restype, *args):
                 f = getattr(lib, name)
@@ -75,7 +78,9 @@ class Player(QThread):
             for k, v in {'vo': 'libmpv', 'hwdec': 'no', 'config': 'no', 'idle': 'yes', 'keep-open': 'yes', 'audio-display': 'no', 'deinterlace': 'no', 'input-default-bindings': 'no'}.items():
                 if option(handle, k.encode(), v.encode()) < 0:
                     raise RuntimeError('Unsupported mpv option: ' + k)
+            self.diagnostics['stage'] = 'Checking audio'
             backend, audio_notice = select_audio_backend()
+            self.diagnostics['audio_backend'] = backend
             if option(handle, b'ao', backend.encode()) < 0:
                 option(handle, b'ao', b'null')
                 audio_notice = 'Audio backend unsupported; preview is playing silently.'
@@ -90,6 +95,7 @@ class Player(QThread):
             if render_create(C.byref(ctx), handle, (Param * 2)(Param(API_TYPE, C.cast(C.c_char_p(b'sw'), C.c_void_p)), Param(0, None))) < 0:
                 raise RuntimeError('libmpv software renderer unavailable')
 
+            self.diagnostics['stage'] = 'Renderer ready'
             render_pending = threading.Event()
             # Retain the ctypes callback until the render context is freed.
             # Callbacks only wake our renderer; calling mpv here can deadlock.
@@ -105,13 +111,17 @@ class Player(QThread):
                     while not self.commands.empty() and self.running:
                         args = self.commands.get()
                         arr = (C.c_char_p * (len(args) + 1))(*(x.encode() for x in args), None)
+                        self.diagnostics['last_command'] = ' '.join(args)
                         rc = command(handle, arr)
+                        self.diagnostics['last_command_result'] = rc
                         if rc < 0:
                             self.error.emit(f'{args[0]}: {error_string(rc).decode()}')
                     while self.running:
                         event = wait_event(handle, 0).contents
                         if event.event_id == EVENT_NONE:
                             break
+                        if event.event_id == 8:
+                            self.diagnostics['stage'] = 'File loaded'
                         if event.event_id == EVENT_END_FILE and event.data:
                             end = C.cast(event.data, C.POINTER(EndFile)).contents
                             if end.error < 0:
@@ -126,6 +136,7 @@ class Player(QThread):
                         get(handle, b'time-pos', FORMAT_DOUBLE, C.byref(pos))
                         get(handle, b'duration', FORMAT_DOUBLE, C.byref(duration))
                         get(handle, b'pause', FORMAT_FLAG, C.byref(pause))
+                        self.diagnostics.update(position=pos.value, duration=duration.value, paused=bool(pause.value))
                         self.status.emit(pos.value, duration.value, bool(pause.value))
                         last_status = time.monotonic()
                     time.sleep(0.02)
@@ -155,9 +166,11 @@ class Player(QThread):
                     # opaque 0xff. Never upload zero/garbage alpha to a compositor.
                     pixels[3::4] = b'\xff' * (len(pixels) // 4)
                     img = QImage(pixels, w, h, stride, QImage.Format.Format_RGB32).copy()
+                    self.diagnostics['rendered_frames'] += 1
                     self.frame.emit(img)
                 render_pending.wait(.015)
         except Exception as e:
+            self.diagnostics.update(stage='Player failed', error=str(e))
             self.error.emit(str(e))
         finally:
             self.running = False

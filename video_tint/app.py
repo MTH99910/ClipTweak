@@ -4,20 +4,24 @@ import os
 import shutil
 import subprocess
 import sys
+import threading
+import platform
+import PySide6
 from collections import deque
 from pathlib import Path
 from dataclasses import asdict
 from PySide6.QtCore import (
-    Qt, QTimer, Signal, QObject, QRunnable, QThreadPool, QSize, QSettings,
+    Qt, QTimer, Signal, QObject, QRunnable, QThreadPool, QSize, QSettings, Slot, qVersion,
 )
-from PySide6.QtGui import QPainter, QIcon, QShortcut, QKeySequence
+from PySide6.QtGui import QPainter, QIcon, QShortcut, QKeySequence, QImage, QColor
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QPushButton,
     QLabel, QSlider, QFileDialog, QMessageBox, QListWidget, QListWidgetItem,
-    QCheckBox, QProgressBar,
+    QCheckBox, QProgressBar, QDialog, QPlainTextEdit,
 )
 from .core import Adjustments, EXTENSIONS, natural_key, probe, processing_graph, Exporter
 from .player import Player
+from . import __version__
 
 class Signals(QObject):
     done = Signal(object)
@@ -43,13 +47,27 @@ class Preview(QWidget):
         super().__init__()
         self.window = window
         self.image = None
+        self.test_pattern = False
+        self.paint_count = 0
+        self.setAttribute(Qt.WidgetAttribute.WA_OpaquePaintEvent, True)
         self.setMinimumSize(320, 180)
         self.setMouseTracking(True)
 
     def paintEvent(self, event):
+        self.paint_count += 1
         p = QPainter(self)
         p.fillRect(self.rect(), Qt.GlobalColor.black)
-        if self.image:
+        if self.test_pattern:
+            colors = ['white', 'yellow', 'cyan', 'green', 'magenta', 'red', 'blue']
+            for index, color in enumerate(colors):
+                left = self.width() * index // len(colors)
+                right = self.width() * (index + 1) // len(colors)
+                p.fillRect(left, 0, right - left, self.height(), QColor(color))
+            p.fillRect(0, self.height()//2 - 25, self.width(), 50, Qt.GlobalColor.black)
+            p.setPen(Qt.GlobalColor.white)
+            p.drawText(self.rect(), Qt.AlignmentFlag.AlignCenter,
+                       'Display test — open Diagnostics to restore video')
+        elif self.image:
             p.drawImage(self.rect(), self.image)
         else:
             p.setPen(Qt.GlobalColor.lightGray)
@@ -90,6 +108,8 @@ class Window(QMainWindow):
         self.exporter = None
         self.saved = None
         self.comparing = False
+        self.frames_received = 0
+        self.frame_receiver_thread = ''
         self.playback_notice = ''
         self.playback_failure = ''
         self.preferences = QSettings('VideoTint', 'VideoTint')
@@ -104,6 +124,7 @@ class Window(QMainWindow):
         self.title = QLabel('Video Tint')
         top.addWidget(self.title, 1)
         self.button(top, 'Fullscreen', self.fullscreen)
+        self.button(top, 'Diagnostics', self.show_diagnostics)
         self.preview = Preview(self)
         layout.addWidget(self.preview, 1)
         self.browser = QWidget(self.preview)
@@ -192,10 +213,10 @@ class Window(QMainWindow):
         self.cancel.hide()
         self.open_saved = self.button(saving, 'Open saved result', self.open_result)
         self.open_saved.hide()
-        self.player.frame.connect(self.draw)
-        self.player.status.connect(self.status)
-        self.player.error.connect(self.playback_error)
-        self.player.notice.connect(self.audio_notice)
+        self.player.frame.connect(self.draw, Qt.ConnectionType.QueuedConnection)
+        self.player.status.connect(self.status, Qt.ConnectionType.QueuedConnection)
+        self.player.error.connect(self.playback_error, Qt.ConnectionType.QueuedConnection)
+        self.player.notice.connect(self.audio_notice, Qt.ConnectionType.QueuedConnection)
         self.filter_timer = QTimer(self)
         self.filter_timer.setSingleShot(True)
         self.filter_timer.setInterval(70)
@@ -234,17 +255,71 @@ class Window(QMainWindow):
         self.message.setText(error if len(error) < 320 else error[-320:])
         self.message.setToolTip(error)
 
+    @Slot(str)
     def playback_error(self, error):
         self.playback_failure = error
         self.report(error)
 
+    @Slot(str)
     def audio_notice(self, message):
         self.playback_notice = message
         self.report(message)
 
+    @Slot(QImage)
     def draw(self, image):
+        self.frames_received += 1
+        self.frame_receiver_thread = threading.current_thread().name
         self.preview.image = image
         self.preview.update()
+
+    def diagnostics_text(self):
+        sample_colors = 'no frame received'
+        if self.preview.image is not None:
+            image = self.preview.image.scaled(32, 18)
+            colors = {image.pixelColor(x, y).rgb()
+                      for x in range(image.width()) for y in range(image.height())}
+            sample_colors = str(len(colors))
+        lines = [
+            f'Video Tint {__version__}',
+            f'Application file: {Path(__file__).resolve()}',
+            f'Python: {sys.executable}',
+            f'Qt platform: {QApplication.platformName()}',
+            f'Qt / PySide6: {qVersion()} / {PySide6.__version__}',
+            f'Linux: {platform.release()}',
+            f'Selected file: {self.source}',
+            f'Frames delivered to Qt: {self.frames_received}',
+            f'Preview paint events: {self.preview.paint_count}',
+            f'Frame receiver thread: {self.frame_receiver_thread}',
+            f'Sampled frame colors: {sample_colors}',
+            f'Preview size: {self.preview.width()} x {self.preview.height()}',
+            f'Preview visible: {self.preview.isVisible()}',
+            f'Test pattern: {self.preview.test_pattern}',
+            f'Player thread running: {self.player.isRunning()}',
+            f'Audio notice: {self.playback_notice}',
+            f'Playback error: {self.playback_failure}',
+        ]
+        lines.extend(f'mpv {key}: {value}' for key, value in self.player.diagnostics.copy().items())
+        return '\n'.join(lines)
+
+    def show_diagnostics(self):
+        dialog = QDialog(self)
+        dialog.setWindowTitle('Video Tint diagnostics')
+        dialog.resize(750, 500)
+        layout = QVBoxLayout(dialog)
+        report = QPlainTextEdit(self.diagnostics_text())
+        report.setReadOnly(True)
+        layout.addWidget(report)
+        buttons = QHBoxLayout()
+        layout.addLayout(buttons)
+        self.button(buttons, 'Refresh', lambda: report.setPlainText(self.diagnostics_text()))
+        self.button(buttons, 'Copy report', lambda: QApplication.clipboard().setText(report.toPlainText()))
+        def test_display():
+            self.preview.test_pattern = not self.preview.test_pattern
+            self.preview.update()
+            dialog.accept()
+        self.button(buttons, 'Restore video' if self.preview.test_pattern else 'Test preview display', test_display)
+        self.button(buttons, 'Close', dialog.accept)
+        dialog.exec()
 
     def position_browser(self):
         if hasattr(self, 'browser'):
@@ -405,6 +480,7 @@ class Window(QMainWindow):
         self.compare.setText('Original shown' if enabled else 'Hold to compare original')
         self.update_filter()
 
+    @Slot(float, float, bool)
     def status(self, pos, duration, paused):
         self.duration = duration
         self.play.setText('Play' if paused else 'Pause')
@@ -485,6 +561,10 @@ class Window(QMainWindow):
         self.thumbnails.waitForDone()
         event.accept()
 
+def configure_application(app):
+    app.setStyle('Fusion')
+    app.setStyleSheet('QWidget { background:#202227; color:#e5e7eb; } QPushButton { background:#343841; border:1px solid #505660; padding:7px; border-radius:4px; } QPushButton:hover { background:#454c58; } QPushButton:disabled { color:#777; } QSlider::groove:horizontal { height:5px; background:#4b515a; } QSlider::handle:horizontal { width:14px; margin:-5px 0; background:#83b7ee; border-radius:7px; } QPushButton#apply { background:#2868a9; font-weight:bold; padding:10px 32px; } QWidget#browser { background:#2b2e35; border:1px solid #555; } QListWidget::item:selected { background:#2868a9; }')
+
 def main():
     app = QApplication(sys.argv)
     app.setApplicationName('Video Tint')
@@ -492,8 +572,7 @@ def main():
     if missing:
         QMessageBox.critical(None, 'Missing dependencies', 'Install: ' + ', '.join(missing))
         return 1
-    app.setStyle('Fusion')
-    app.setStyleSheet('QWidget { background:#202227; color:#e5e7eb; } QPushButton { background:#343841; border:1px solid #505660; padding:7px; border-radius:4px; } QPushButton:hover { background:#454c58; } QPushButton:disabled { color:#777; } QSlider::groove:horizontal { height:5px; background:#4b515a; } QSlider::handle:horizontal { width:14px; margin:-5px 0; background:#83b7ee; border-radius:7px; } QPushButton#apply { background:#2868a9; font-weight:bold; padding:10px 32px; } QWidget#browser { background:#2b2e35; border:1px solid #555; } QListWidget::item:selected { background:#2868a9; }')
+    configure_application(app)
     window = Window()
     window.show()
     if len(sys.argv) > 1:

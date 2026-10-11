@@ -6,7 +6,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from PySide6.QtCore import QTimer
 from PySide6.QtWidgets import QApplication
-from video_tint.app import Window
+from video_tint.app import Window, configure_application
 from video_tint.core import probe, processing_graph
 temp = tempfile.TemporaryDirectory(prefix='video-tint-smoke-')
 interlaced = '--interlaced' in sys.argv
@@ -26,6 +26,7 @@ import shutil
 next_source = source.with_name('Sony sample 日本 $ 10' + extension)
 shutil.copyfile(source, next_source)
 app = QApplication([])
+configure_application(app)
 window = Window()
 window.resize(900, 600)
 window.show()
@@ -49,7 +50,8 @@ def check():
             window.player.command('set', 'pause', 'yes')
             state.update(stage=1, wait=time.monotonic())
         elif stage == 1 and time.monotonic() - state['wait'] > 0.5:
-            # Check the actual QWidget surface, not just mpv screenshots.
+            assert window.frame_receiver_thread == 'MainThread', 'Frames delivered outside the GUI thread'
+            # Check the actual QWidget surface, with the production stylesheet.
             image = window.preview.image
             assert all(value == 255 for value in bytes(image.bits())[3::4]), 'Undefined frame alpha'
             painted = window.preview.grab().toImage()

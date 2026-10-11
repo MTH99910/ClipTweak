@@ -47,6 +47,14 @@ spaces. Keep the checkout in place. To uninstall the entry, remove
 `~/.local/share/applications/video-tint.desktop` (or the corresponding
 `$XDG_DATA_HOME` location).
 
+For a blank preview, click **Diagnostics**. The report includes the actual
+application path/version, Qt platform, player state, received frames, paint events,
+and sampled frame colors. **Copy report** copies it to the clipboard. **Test
+preview display** shows colored bars in the video area independently of mpv;
+open Diagnostics again and choose **Restore video** to return to playback.
+This distinguishes decoding problems from display/compositor problems and also
+checks whether a launcher is running a different installed copy.
+
 If the preview is blank or playback stays at 00:00, launch from a terminal to
 see the error at the bottom of the window. Audio startup is checked in a separate
 process with a timeout, so an inaccessible or stalled sound server cannot block
@@ -238,9 +246,11 @@ backend; remove it for ordinary playback.
 
 The build session could run offscreen Qt but could not connect even a minimal
 Qt application to its advertised Wayland display, and could not access the
-desktop audio server. Visible Plasma/Wayland behavior, audible playback, actual
-Sony NEX-5 footage, and RX 6700 XT desktop performance therefore still need a
-local check. No user footage was available to the build session.
+desktop audio server. Visible Plasma/Wayland behavior, audible playback, and RX 6700 XT desktop
+performance therefore still need a local check. A subsequent regression check
+played actual Sony NEX-5 MTS footage from the local Videos folder read-only, with
+the production stylesheet, GUI-thread frame delivery, and the diagnostic display
+test. The original footage was not modified.
 
 ## License and dependencies
 
