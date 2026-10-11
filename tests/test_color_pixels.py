@@ -1,7 +1,7 @@
 """Exercise actual FFmpeg pixels, independently of graph string formatting."""
 import subprocess
 import unittest
-from video_tint.core import Adjustments, filter_graph
+from cliptweak.core import Adjustments, filter_graph
 
 
 class ColorPixelTests(unittest.TestCase):

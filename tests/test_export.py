@@ -5,14 +5,14 @@ import shutil
 import subprocess
 import tempfile
 import unittest
-from video_tint.core import Adjustments, Exporter, probe
+from cliptweak.core import Adjustments, Exporter, probe
 from unittest.mock import patch
 
 @unittest.skipUnless(shutil.which('ffmpeg') and shutil.which('ffprobe'), 'FFmpeg required')
 class ExportTests(unittest.TestCase):
 
     def setUp(self):
-        self.temp = tempfile.TemporaryDirectory(prefix='video-tint-export-')
+        self.temp = tempfile.TemporaryDirectory(prefix='cliptweak-export-')
         self.folder = Path(self.temp.name)
 
     def tearDown(self):
@@ -57,7 +57,7 @@ class ExportTests(unittest.TestCase):
                 data['streams'][0]['field_order'] = 'unknown'
                 result.stdout = json.dumps(data)
             return result
-        with patch('video_tint.core.subprocess.run', side_effect=erase_field_metadata):
+        with patch('cliptweak.core.subprocess.run', side_effect=erase_field_metadata):
             info = probe(source)
         self.assertTrue(info['interlaced'])
         self.assertEqual(info['detected_parity'], 'tff')
@@ -113,7 +113,7 @@ class ExportTests(unittest.TestCase):
         self.assertEqual((info['video']['width'], info['video']['height']), (180, 320))
         self.assertFalse(any((s.get('rotation') for s in info['video'].get('side_data_list', []))))
 
-    def test_backup_and_unique_names(self):
+    def test_replace_without_backup_and_unique_names(self):
         source = self.make()
         original = source.read_bytes()
         first = self.export(source)
@@ -121,7 +121,7 @@ class ExportTests(unittest.TestCase):
         self.assertNotEqual(first, second)
         self.assertEqual(source.read_bytes(), original)
         self.assertEqual(self.export(source, True), source)
-        self.assertEqual((self.folder / 'source_backup.mp4').read_bytes(), original)
+        self.assertFalse(list(self.folder.glob('*backup*')))
         self.assertNotEqual(source.read_bytes(), original)
 
     def test_cancel_preserves_source(self):

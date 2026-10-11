@@ -6,9 +6,9 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from PySide6.QtCore import QTimer
 from PySide6.QtWidgets import QApplication
-from video_tint.app import Window, configure_application
-from video_tint.core import probe, processing_graph
-temp = tempfile.TemporaryDirectory(prefix='video-tint-smoke-')
+from cliptweak.app import Window, configure_application
+from cliptweak.core import probe, processing_graph
+temp = tempfile.TemporaryDirectory(prefix='cliptweak-smoke-')
 interlaced = '--interlaced' in sys.argv
 extension = '.MTS' if interlaced else '.mp4'
 source = Path(temp.name) / ('Sony sample 日本 $ 2' + extension)
@@ -153,7 +153,7 @@ app.exec()
 window.pool.waitForDone()
 window.thumbnails.waitForDone()
 
-if os.environ.get('VIDEOTINT_DEBUG_SMOKE'):
-    shutil.copytree(temp.name, '/tmp/video-tint-debug-smoke', dirs_exist_ok=True)
+if os.environ.get('CLIPTWEAK_DEBUG_SMOKE'):
+    shutil.copytree(temp.name, '/tmp/cliptweak-debug-smoke', dirs_exist_ok=True)
 temp.cleanup()
 raise SystemExit(1 if state.get('failed') or state['stage'] != 8 else 0)

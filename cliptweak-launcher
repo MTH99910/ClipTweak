@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+set -e
+cd -- "$(dirname -- "$(readlink -f -- "$0")")"
+task_python="${CLIPTWEAK_PYTHON:-${VIDEOTINT_PYTHON:-python}}"
+if [[ -x .venv/bin/python ]]; then task_python=.venv/bin/python; fi
+if ! "$task_python" -c 'import PySide6' >/dev/null 2>&1; then
+    echo 'ClipTweak needs Python and PySide6. On Arch/CachyOS: sudo pacman -S python pyside6' >&2
+    exit 1
+fi
+exec "$task_python" -m cliptweak "$@"

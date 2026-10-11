@@ -1,8 +1,8 @@
 [Desktop Entry]
 Type=Application
-Name=Video Tint
+Name=ClipTweak
 Comment=Watch and color-correct a video
-Exec=video-tint %f
+Exec=cliptweak %f
 Icon=video-x-generic
 Terminal=false
 Categories=AudioVideo;Video;Player;

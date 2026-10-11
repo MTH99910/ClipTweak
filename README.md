@@ -1,7 +1,8 @@
-# Video Tint
+# ClipTweak
 
 A small native Linux video viewer with live color correction. Open a video,
-watch it, adjust six sliders, and press **Apply** to save a corrected MP4.
+watch it, adjust six sliders, stage changes across several videos, and press
+**Apply** to save every staged correction.
 No timeline, tracks, projects, browser, cloud service, or account is involved.
 
 Built with Python, PySide6, embedded libmpv, and FFmpeg. Designed for SDR Sony
@@ -14,10 +15,10 @@ Use the distribution's Python and Qt packages together:
 
 ```sh
 sudo pacman -Syu --needed python pyside6 qt6-wayland mpv ffmpeg
-cd "/path/to/Video adjuster"
-./video-tint
+cd "/path/to/ClipTweak"
+./cliptweak-launcher
 # Or open a file directly:
-./video-tint "/path/to/footage/My clip.MTS"
+./cliptweak-launcher "/path/to/footage/My clip.MTS"
 ```
 
 Python 3.10+, PySide6 6.6+, libmpv with the software render API, and FFmpeg 6+
@@ -29,11 +30,11 @@ included.
 Qt normally selects Wayland automatically on Plasma. To select it explicitly:
 
 ```sh
-QT_QPA_PLATFORM=wayland ./video-tint
+QT_QPA_PLATFORM=wayland ./cliptweak-launcher
 ```
 
 If Qt cannot connect, run from a terminal inside your desktop session and check
-that `qt6-wayland` is installed. `QT_QPA_PLATFORM=xcb ./video-tint` is an optional
+that `qt6-wayland` is installed. `QT_QPA_PLATFORM=xcb ./cliptweak-launcher` is an optional
 XWayland fallback. The app does not embed an X11 window or require this fallback.
 
 For a launcher in KDE's application menu:
@@ -44,11 +45,11 @@ For a launcher in KDE's application menu:
 
 This installs a desktop entry pointing at this checkout, including paths with
 spaces. Keep the checkout in place. To uninstall the entry, remove
-`~/.local/share/applications/video-tint.desktop` (or the corresponding
+`~/.local/share/applications/cliptweak.desktop` (or the corresponding
 `$XDG_DATA_HOME` location).
 
 Qt's desktop/platform initialization can select a regional C-runtime numeric
-locale. libmpv refuses to create a player unless `LC_NUMERIC` is `C`; Video Tint
+locale. libmpv refuses to create a player unless `LC_NUMERIC` is `C`; ClipTweak
 sets that category inside its process after Qt initializes and before starting
 its player. Other locale categories and Unicode path handling are preserved.
 This follows [mpv's Qt initialization example](https://github.com/mpv-player/mpv-examples/blob/master/libmpv/qt/qtexample.cpp).
@@ -69,9 +70,9 @@ video plays silently and the window reports why; saving still retains audio.
 You can select a backend explicitly:
 
 ```sh
-VIDEOTINT_AUDIO=pipewire ./video-tint
+CLIPTWEAK_AUDIO=pipewire ./cliptweak-launcher
 # Diagnostic: bypass audio entirely, while retaining audio in saved output.
-VIDEOTINT_AUDIO=null ./video-tint
+CLIPTWEAK_AUDIO=null ./cliptweak-launcher
 ```
 
 Alternatively, install the Python package into a virtual environment:
@@ -79,7 +80,7 @@ Alternatively, install the Python package into a virtual environment:
 ```sh
 python -m venv .venv
 .venv/bin/pip install -e .
-.venv/bin/video-tint
+.venv/bin/cliptweak
 ```
 
 FFmpeg and libmpv still come from system packages. The checkout launcher
@@ -94,7 +95,11 @@ declare the Python dependency.
 - Move the pointer to the preview's right edge to reveal thumbnails and names.
   The panel stays open while interacting with it; **Pin folder panel** keeps it
   visible. Click a thumbnail to open that video.
-- Use play/pause, the seek bar, time display, volume, and fullscreen controls.
+- Previous, play/pause, and next use icons beside the seek bar. Click anywhere
+  on the seek bar to jump directly; dragging its handle also works.
+- Hover an adjustment slider and turn the wheel for one integer step per
+  detent (0.01 in the displayed value). Seeking and volume use standard controls.
+- Use the time display, volume, and fullscreen controls.
 - Brightness defaults to 0; contrast, gamma, and saturation to 1; tint and
   temperature to 0. Each slider has a reset, plus **Reset all**.
 - Positive tint adds magenta relative to green; positive temperature warms the
@@ -122,9 +127,24 @@ declare the Python dependency.
 
 ## Saving
 
-**Apply** immediately starts a background encode with a snapshot of the current
-sliders. Changing sliders or browsing during saving cannot alter that encode.
-A progress bar and **Cancel save** remain available. One encode runs per window.
+**Apply (N)** starts a background batch of every video with unsaved, non-neutral
+adjustments in this session, including videos outside the currently visible
+folder. The folder panel marks these files **staged**. Simply opening a file or
+resetting its sliders to neutral does not queue a save. After a successful
+separate save, those exact settings are marked saved; editing them stages the
+source again. Settings/staging are session-only, so apply before quitting.
+
+The entire batch uses immutable snapshots taken when Apply is clicked and
+encodes one file at a time. Progress names the current file and shows the overall
+batch percentage. Changing sliders or browsing cannot change those snapshots.
+**Cancel save** stops the active encode and skips remaining files; files already
+completed stay saved. Failed and cancelled files remain staged for retry, and a
+failed file does not prevent other files in the batch from saving.
+
+With in-place replacement, adjustment controls for queued MP4 sources are
+locked until the batch ends, to avoid applying changes against obsolete source
+pixels. Browsing/playback remain available. Separate saves permit further
+adjustments while the batch runs; those later changes stay staged.
 
 The default is `clip_corrected.mp4` beside the source. Existing results are kept;
 subsequent saves use `_corrected_2`, `_corrected_3`, etc. Video is re-encoded using
@@ -137,16 +157,16 @@ are retained. Playback of
 less common MP4 audio codecs depends on the receiving player; use a recent
 FFmpeg build. Sony AVCHD AC-3 audio is retained.
 
-The optional **Replace MP4 (keep backup)** preference is remembered. Replacement
+The optional **Replace MP4 (no backup)** preference is remembered. Replacement
 is allowed only for `.mp4` sources; other containers still produce a separate
-MP4. The original MP4 is retained as `clip_backup.mp4` (or a unique numbered
-backup) before replacement. Backups are never silently overwritten.
+MP4. After successful encoding and validation, the original MP4 is replaced
+atomically. No backup file is created; the original content is no longer retained.
 
 Every encode writes to a unique temporary file in the source folder. A zero
 FFmpeg exit status, readable video stream, output size, and matching duration
 are checked before publication. The source must still have its original size
 and modification time. Separate outputs use atomic, no-clobber publication;
-replacement uses an atomic rename after retaining the original backup. Destination
+replacement uses an atomic rename without a backup. Destination
 lock files prevent concurrent app instances from writing the same target.
 Failure or cancellation removes the temporary output and leaves the source
 intact. A hard crash may leave a hidden `.videotint-*` temporary file or
@@ -154,7 +174,7 @@ intact. A hard crash may leave a hidden `.videotint-*` temporary file or
 The folder must allow file creation and hard links (normal local Linux
 filesystems do). A read-only folder or unsupported filesystem produces an error.
 
-On success, **Open saved result** opens the new video with neutral sliders.
+On success, **Open saved result** opens the last saved video with neutral sliders.
 Replacing the currently viewed source reloads the saved video at neutral.
 
 ## Processing consistency
@@ -218,7 +238,7 @@ attachments, extra video streams, and camera sidecars are not preserved.
   playback on a slow CPU.
 - Thumbnail generation is limited to two workers; navigating folders discards
   pending work for the old folder. JPEGs are cached under
-  `${XDG_CACHE_HOME:-~/.cache}/video-tint`, keyed by full path, size, and nanosecond
+  `${XDG_CACHE_HOME:-~/.cache}/cliptweak`, keyed by full path, size, and nanosecond
   modification time. The cache is reusable and can be deleted at any time.
   It has no automatic size cap.
 - Closing during a save requests cancellation; close again after cancellation
@@ -234,12 +254,12 @@ state, folder browsing, and background jobs.
 
 ```sh
 python -m unittest discover -s tests -v
-XDG_CACHE_HOME=/tmp/video-tint-test-cache \
-QT_QPA_PLATFORM=offscreen VIDEOTINT_TEST_AUDIO=null \
+XDG_CACHE_HOME=/tmp/cliptweak-test-cache \
+QT_QPA_PLATFORM=offscreen CLIPTWEAK_TEST_AUDIO=null \
 python scripts/smoke_test.py
 # Repeat with generated interlaced MTS input:
-XDG_CACHE_HOME=/tmp/video-tint-test-cache \
-QT_QPA_PLATFORM=offscreen VIDEOTINT_TEST_AUDIO=null \
+XDG_CACHE_HOME=/tmp/cliptweak-test-cache \
+QT_QPA_PLATFORM=offscreen CLIPTWEAK_TEST_AUDIO=null \
 python scripts/smoke_test.py --interlaced
 ```
 
@@ -248,10 +268,10 @@ cover working backends, stalled servers, and a visible silent fallback. A real
 libmpv regression reproduces null-player creation under `en_GB.UTF-8` and checks
 that the numeric-locale reset allows successful creation without changing other
 locale categories. Run the
-GUI smoke test without `VIDEOTINT_TEST_AUDIO` to exercise normal audio startup.
+GUI smoke test without `CLIPTWEAK_TEST_AUDIO` to exercise normal audio startup.
 The generated samples still save their audio even when preview audio is unavailable. They cover filter
 mapping, natural sorting, paths with spaces/Unicode/shell characters, unique
-names, output locking, encode failure, cancellation, backup replacement, AC-3
+names, output locking, encode failure, cancellation, replacement without backups, multi-file snapshots/partial failure, AC-3
 copying, PCM-to-AAC conversion, sample aspect ratio, rotation, full range,
 BT.709 tags, real interlaced H.264 MTS and remuxed MP4, missing-field-metadata
 `idet` detection, and variable frame intervals.
@@ -260,7 +280,9 @@ The GUI smoke test checks the actual painted Qt preview surface and plays throug
 moving position, saves through the UI, compares a preview screenshot with a
 decoded saved frame through the same mpv RGB converter using SSIM and PSNR, checks asynchronous thumbnails/natural folder
 ordering, reopens the saved result, and checks per-file settings and export
-snapshot isolation. `VIDEOTINT_TEST_AUDIO=null` is a test-only silent audio
+snapshot isolation. Qt event tests also cover click-to-seek, one-step wheel
+adjustments, accessible transport icons, staged-file counting, and resetting
+replaced sources. `CLIPTWEAK_TEST_AUDIO=null` is a test-only silent audio
 backend; remove it for ordinary playback.
 
 The build session could run offscreen Qt but could not connect even a minimal
@@ -274,9 +296,25 @@ tint (241 rendered frames in eight seconds, no playback errors). Pixel tests
 verify neutral YUV identity, both balance directions, preserved black/highlights,
 and gentle, near-monotonic gradients. The original footage was not modified.
 
+The batch GUI smoke tests stage two generated videos through folder navigation,
+click Apply, check both outputs and an untouched neutral file, then play a saved
+result. They also cover separate-output snapshot isolation and replacement
+without extra files:
+
+```sh
+QT_QPA_PLATFORM=offscreen CLIPTWEAK_AUDIO=null \
+XDG_CACHE_HOME=/tmp/cliptweak-test-cache python scripts/batch_smoke_test.py
+QT_QPA_PLATFORM=offscreen CLIPTWEAK_AUDIO=null \
+XDG_CACHE_HOME=/tmp/cliptweak-test-cache python scripts/batch_smoke_test.py --replace
+```
+
+The original `./video-tint` launcher still forwards to ClipTweak so existing
+shortcuts continue to work. Run `./scripts/install-desktop.sh` for a menu entry
+with the new name.
+
 ## License and dependencies
 
-Video Tint's application source is [MIT licensed](LICENSE). Dependency binaries
+ClipTweak's application source is [MIT licensed](LICENSE). Dependency binaries
 are not bundled and retain their own licenses:
 
 - [PySide6 / Qt for Python](https://doc.qt.io/qtforpython-6/licenses.html):
@@ -301,6 +339,6 @@ For the full GUI smoke test under the previously failing desktop numeric locale
 (on a system with `en_GB.UTF-8` installed):
 
 ```sh
-QT_QPA_PLATFORM=offscreen XDG_CACHE_HOME=/tmp/video-tint-test-cache \
+QT_QPA_PLATFORM=offscreen XDG_CACHE_HOME=/tmp/cliptweak-test-cache \
 python scripts/smoke_test.py --desktop-locale
 ```

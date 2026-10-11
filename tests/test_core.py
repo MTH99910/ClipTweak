@@ -1,7 +1,7 @@
 import tempfile, unittest
 from pathlib import Path
 from unittest.mock import patch
-from video_tint.core import Adjustments, Exporter, filter_graph, natural_key, probe, unique_path
+from cliptweak.core import Adjustments, Exporter, filter_graph, natural_key, probe, unique_path
 
 class CoreTests(unittest.TestCase):
 
@@ -13,7 +13,7 @@ class CoreTests(unittest.TestCase):
         self.assertIn('format=gbrp16le', graph)
         self.assertIn('in_range=limited', graph)
         self.assertNotIn('colorbalance', graph)
-        from video_tint.core import white_balance_gains
+        from cliptweak.core import white_balance_gains
         r, g, b = white_balance_gains(Adjustments(temperature=1))
         self.assertGreater(r, g)
         self.assertGreater(g, b)

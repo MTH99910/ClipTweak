@@ -16,7 +16,7 @@ import ctypes as C
 import ctypes.util
 import locale
 from PySide6.QtWidgets import QApplication
-from video_tint.player import Player
+from cliptweak.player import Player
 app = QApplication([])
 try:
     locale.setlocale(locale.LC_NUMERIC, 'en_GB.UTF-8')

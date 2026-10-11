@@ -13,13 +13,13 @@ def select_audio_backend():
     happens once on the player worker, never on the Qt thread. Failure affects
     preview audio only; FFmpeg exports continue to preserve the source audio.
     """
-    requested = os.environ.get('VIDEOTINT_AUDIO', 'auto')
-    if os.environ.get('VIDEOTINT_TEST_AUDIO') == 'null':
+    requested = os.environ.get('CLIPTWEAK_AUDIO', os.environ.get('VIDEOTINT_AUDIO', 'auto'))
+    if os.environ.get('CLIPTWEAK_TEST_AUDIO', os.environ.get('VIDEOTINT_TEST_AUDIO')) == 'null':
         return 'null', ''
     if requested == 'null':
         return 'null', 'Silent preview selected; saved videos retain their audio.'
     if requested not in {'auto', *BACKENDS}:
-        raise ValueError('VIDEOTINT_AUDIO must be auto, pipewire, pulse, alsa, or null')
+        raise ValueError('CLIPTWEAK_AUDIO must be auto, pipewire, pulse, alsa, or null')
     executable = shutil.which('mpv')
     if not executable:
         return 'null', 'Install the mpv executable to enable preview audio; playing silently.'

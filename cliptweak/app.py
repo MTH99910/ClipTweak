@@ -17,9 +17,9 @@ from PySide6.QtGui import QPainter, QIcon, QShortcut, QKeySequence, QImage, QCol
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QPushButton,
     QLabel, QSlider, QFileDialog, QMessageBox, QListWidget, QListWidgetItem,
-    QCheckBox, QProgressBar, QDialog, QPlainTextEdit,
+    QCheckBox, QProgressBar, QDialog, QPlainTextEdit, QStyle, QStyleOptionSlider,
 )
-from .core import Adjustments, EXTENSIONS, natural_key, probe, processing_graph, Exporter
+from .core import Adjustments, EXTENSIONS, natural_key, probe, processing_graph, BatchExporter, StagedVideo
 from .player import Player
 from . import __version__
 
@@ -40,6 +40,49 @@ class Job(QRunnable):
             self.signals.done.emit(self.function(self.signals.progress.emit))
         except Exception as e:
             self.signals.failed.emit(str(e))
+
+class AdjustmentSlider(QSlider):
+    """One wheel detent changes one integer unit, regardless of page step."""
+    def __init__(self):
+        super().__init__(Qt.Orientation.Horizontal)
+        self.wheel_remainder = 0
+        self.setSingleStep(1)
+
+    def wheelEvent(self, event):
+        if not self.isEnabled():
+            event.ignore()
+            return
+        self.wheel_remainder += event.angleDelta().y()
+        steps = int(self.wheel_remainder / 120)
+        self.wheel_remainder -= steps * 120
+        if steps:
+            self.setValue(self.value() + steps)
+        event.accept()
+
+
+class SeekSlider(QSlider):
+    """Jump directly on groove click, with normal handle dragging retained."""
+    seekRequested = Signal()
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton:
+            option = QStyleOptionSlider()
+            self.initStyleOption(option)
+            handle = self.style().subControlRect(QStyle.ComplexControl.CC_Slider,
+                option, QStyle.SubControl.SC_SliderHandle, self)
+            if not handle.contains(event.position().toPoint()):
+                groove = self.style().subControlRect(QStyle.ComplexControl.CC_Slider,
+                    option, QStyle.SubControl.SC_SliderGroove, self)
+                span = max(1, groove.width() - handle.width())
+                position = round(event.position().x() - groove.x() - handle.width()/2)
+                self.setValue(QStyle.sliderValueFromPosition(self.minimum(),
+                    self.maximum(), max(0, min(span, position)), span, option.upsideDown))
+                super().mousePressEvent(event)
+                self.seekRequested.emit()
+                event.accept()
+                return
+        super().mousePressEvent(event)
+
 
 class Preview(QWidget):
 
@@ -86,10 +129,11 @@ class Preview(QWidget):
         self.window.fullscreen()
 
 class Window(QMainWindow):
+    item_saved = Signal(object, object)
 
     def __init__(self):
         super().__init__()
-        self.setWindowTitle('Video Tint')
+        self.setWindowTitle('ClipTweak')
         self.resize(1200, 800)
         self.setAcceptDrops(True)
         self.player = Player()
@@ -101,27 +145,29 @@ class Window(QMainWindow):
         self.thumbnail_pending = deque()
         self.thumbnail_active = 0
         self.settings = {}
+        self.infos = {}
+        self.applied_settings = {}
         self.source = None
         self.info = None
         self.files = []
         self.loading_id = 0
         self.exporter = None
+        self.processed_saves = set()
+        self.item_saved.connect(self.save_item_done, Qt.ConnectionType.QueuedConnection)
         self.saved = None
         self.comparing = False
         self.frames_received = 0
         self.frame_receiver_thread = ''
         self.playback_notice = ''
         self.playback_failure = ''
-        self.preferences = QSettings('VideoTint', 'VideoTint')
+        self.preferences = QSettings('ClipTweak', 'ClipTweak')
         root = QWidget()
         self.setCentralWidget(root)
         layout = QVBoxLayout(root)
         top = QHBoxLayout()
         layout.addLayout(top)
         self.button(top, 'Open video…', self.choose)
-        self.button(top, '◀ Previous', lambda: self.navigate(-1))
-        self.button(top, 'Next ▶', lambda: self.navigate(1))
-        self.title = QLabel('Video Tint')
+        self.title = QLabel('ClipTweak')
         top.addWidget(self.title, 1)
         self.button(top, 'Fullscreen', self.fullscreen)
         self.button(top, 'Diagnostics', self.show_diagnostics)
@@ -143,11 +189,14 @@ class Window(QMainWindow):
         self.hide_timer.start(500)
         transport = QHBoxLayout()
         layout.addLayout(transport)
-        self.play = self.button(transport, 'Play / Pause', lambda: self.player.command('cycle', 'pause'))
-        self.seek = QSlider(Qt.Orientation.Horizontal)
+        self.previous = self.icon_button(transport, QStyle.StandardPixmap.SP_MediaSkipBackward, 'Previous video (Alt+Left)', lambda: self.navigate(-1))
+        self.play = self.icon_button(transport, QStyle.StandardPixmap.SP_MediaPlay, 'Play / Pause (Space)', lambda: self.player.command('cycle', 'pause'))
+        self.next = self.icon_button(transport, QStyle.StandardPixmap.SP_MediaSkipForward, 'Next video (Alt+Right)', lambda: self.navigate(1))
+        self.seek = SeekSlider(Qt.Orientation.Horizontal)
         self.seek.setRange(0, 10000)
         transport.addWidget(self.seek, 1)
         self.seek.sliderReleased.connect(self.seek_to)
+        self.seek.seekRequested.connect(self.seek_to)
         self.time = QLabel('00:00 / 00:00')
         transport.addWidget(self.time)
         transport.addWidget(QLabel('Volume'))
@@ -157,8 +206,10 @@ class Window(QMainWindow):
         volume.setValue(80)
         volume.valueChanged.connect(lambda v: self.player.command('set', 'volume', v))
         transport.addWidget(volume)
-        controls = QHBoxLayout()
-        layout.addLayout(controls)
+        self.adjustment_panel = QWidget()
+        controls = QHBoxLayout(self.adjustment_panel)
+        controls.setContentsMargins(0, 0, 0, 0)
+        layout.addWidget(self.adjustment_panel)
         self.sliders = {}
         self.values = {}
         specs = [
@@ -177,7 +228,7 @@ class Window(QMainWindow):
             value = QLabel()
             row.addWidget(value)
             column.addLayout(row)
-            slider = QSlider(Qt.Orientation.Horizontal)
+            slider = AdjustmentSlider()
             slider.setRange(low, high)
             slider.setValue(neutral)
             column.addWidget(slider)
@@ -187,14 +238,15 @@ class Window(QMainWindow):
             self.button(column, 'Reset', lambda checked=False, s=slider, n=neutral: s.setValue(n))
         footer = QHBoxLayout()
         layout.addLayout(footer)
-        self.button(footer, 'Reset all', self.reset)
+        self.reset_all = self.button(footer, 'Reset all', self.reset)
         self.compare = QPushButton('Hold to compare original')
         self.compare.pressed.connect(lambda: self.compare_original(True))
         self.compare.released.connect(lambda: self.compare_original(False))
         footer.addWidget(self.compare)
-        self.replace = QCheckBox('Replace MP4 (keep backup)')
+        self.replace = QCheckBox('Replace MP4 (no backup)')
         self.replace.setChecked(self.preferences.value('replace', False, type=bool))
         self.replace.toggled.connect(lambda v: self.preferences.setValue('replace', v))
+        self.replace.setToolTip('Replace MP4 originals after successful validation. No backup is retained. Other containers save a separate MP4.')
         footer.addWidget(self.replace)
         footer.addStretch()
         self.apply = self.button(footer, 'Apply', self.save)
@@ -233,6 +285,14 @@ class Window(QMainWindow):
         b.clicked.connect(callback)
         layout.addWidget(b)
         return b
+
+    def icon_button(self, layout, icon, tooltip, callback):
+        button = self.button(layout, '', callback)
+        button.setIcon(self.style().standardIcon(icon))
+        button.setIconSize(QSize(22, 22))
+        button.setToolTip(tooltip)
+        button.setAccessibleName(tooltip.split(' (')[0])
+        return button
 
     def submit(self, function, done, pool=None, failed=None):
         """Retain jobs and deliver results through queued Qt signals."""
@@ -280,7 +340,7 @@ class Window(QMainWindow):
                       for x in range(image.width()) for y in range(image.height())}
             sample_colors = str(len(colors))
         lines = [
-            f'Video Tint {__version__}',
+            f'ClipTweak {__version__}',
             f'Application file: {Path(__file__).resolve()}',
             f'Python: {sys.executable}',
             f'Qt platform: {QApplication.platformName()}',
@@ -303,7 +363,7 @@ class Window(QMainWindow):
 
     def show_diagnostics(self):
         dialog = QDialog(self)
-        dialog.setWindowTitle('Video Tint diagnostics')
+        dialog.setWindowTitle('ClipTweak diagnostics')
         dialog.resize(750, 500)
         layout = QVBoxLayout(dialog)
         report = QPlainTextEdit(self.diagnostics_text())
@@ -347,9 +407,9 @@ class Window(QMainWindow):
                 self.open(Path(u.toLocalFile()))
                 break
 
-    def open(self, path):
+    def open(self, path, notice=None):
         """Probe asynchronously; ignore results superseded by a later selection."""
-        path = path.absolute()
+        path = path.resolve()
         self.loading_id += 1
         token = self.loading_id
         self.message.setText('Inspecting video…')
@@ -368,6 +428,7 @@ class Window(QMainWindow):
                 return
             self.info, self.files = result
             self.source = path
+            self.infos[path] = self.info
             self.settings.setdefault(path, Adjustments())
             self.comparing = False
             self.compare.setText('Hold to compare original')
@@ -378,8 +439,8 @@ class Window(QMainWindow):
             self.player.command('loadfile', str(path), 'replace')
             self.player.command('set', 'pause', 'no')
             self.title.setText(path.name)
-            self.apply.setEnabled(self.exporter is None)
-            self.message.setText('Saved result loaded with neutral settings: ' + path.name if path == self.saved else 'Interlaced: frame-rate-preserving BWDIF in preview and save' if self.info['interlaced'] else 'Ready — SDR video')
+            self.update_staged_ui()
+            self.message.setText(notice or ('Saved result loaded with neutral settings: ' + path.name if path == self.saved else 'Interlaced: frame-rate-preserving BWDIF in preview and save' if self.info['interlaced'] else 'Ready — SDR video'))
             if self.playback_failure or self.playback_notice:
                 self.report(self.playback_failure or self.playback_notice)
             self.populate()
@@ -395,6 +456,7 @@ class Window(QMainWindow):
             if path == self.source:
                 self.list.setCurrentItem(item)
             self.thumbnail_pending.append((self.loading_id, path))
+        self.update_staged_ui()
         self.pump_thumbnails()
 
     def pump_thumbnails(self):
@@ -406,7 +468,7 @@ class Window(QMainWindow):
             def make(_, p=path):
                 stat = p.stat()
                 key = hashlib.sha256(f'{p}:{stat.st_size}:{stat.st_mtime_ns}'.encode()).hexdigest()
-                cache = Path(os.environ.get('XDG_CACHE_HOME', str(Path.home() / '.cache'))) / 'video-tint'
+                cache = Path(os.environ.get('XDG_CACHE_HOME', str(Path.home() / '.cache'))) / 'cliptweak'
                 cache.mkdir(parents=True, exist_ok=True)
                 target = cache / (key + '.jpg')
                 if not target.exists():
@@ -449,6 +511,7 @@ class Window(QMainWindow):
             self.values[k].setText(f'{s.value() / scale:.2f}')
         if self.source:
             self.settings[self.source] = self.current()
+        self.update_staged_ui()
         self.filter_timer.start()
 
     def restore(self):
@@ -490,7 +553,7 @@ class Window(QMainWindow):
     @Slot(float, float, bool)
     def status(self, pos, duration, paused):
         self.duration = duration
-        self.play.setText('Play' if paused else 'Pause')
+        self.play.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_MediaPlay if paused else QStyle.StandardPixmap.SP_MediaPause))
         if not self.seek.isSliderDown():
             self.seek.setValue(int(pos / duration * 10000) if duration else 0)
 
@@ -511,38 +574,98 @@ class Window(QMainWindow):
         if self.isFullScreen():
             self.showNormal()
 
+    def staged_paths(self):
+        neutral = Adjustments()
+        return [path for path, settings in self.settings.items()
+                if path in self.infos and settings != neutral
+                and settings != self.applied_settings.get(path)]
+
+    def update_staged_ui(self):
+        paths = set(self.staged_paths())
+        self.apply.setText(f'Apply ({len(paths)})' if paths else 'Apply')
+        self.apply.setEnabled(bool(paths) and self.exporter is None)
+        self.apply.setToolTip('Save all staged videos in this session')
+        # In-place batch sources cannot be edited until their new pixels load.
+        locked = bool(self.exporter and self.exporter.replace and any(
+            entry.source == self.source and entry.source.suffix.lower() == '.mp4'
+            for entry in self.exporter.entries))
+        self.adjustment_panel.setEnabled(not locked)
+        self.reset_all.setEnabled(not locked)
+        for index in range(self.list.count()):
+            item = self.list.item(index)
+            path = Path(item.data(Qt.ItemDataRole.UserRole))
+            item.setText(path.name + (' • staged' if path in paths else ''))
+
     def save(self):
-        """Snapshot the current file and adjustments before starting an encode."""
-        if not self.source or self.exporter:
+        """Snapshot every staged file before starting the sequential batch."""
+        if self.exporter:
             return
-        self.exporter = Exporter(self.source, self.current(), self.info, self.replace.isChecked())
+        paths = self.staged_paths()
+        if not paths:
+            return
+        self.exporter = BatchExporter([StagedVideo(path, self.settings[path],
+            self.infos[path]) for path in paths], self.replace.isChecked())
         exporter = self.exporter
-        self.apply.setEnabled(False)
+        self.processed_saves.clear()
+        self.update_staged_ui()
+        self.replace.setEnabled(False)
         self.progress.setValue(0)
         self.progress.show()
         self.cancel.show()
         self.open_saved.hide()
-        self.message.setText('Saving settings snapshot…')
-        job = self.submit(lambda progress: exporter.run(progress), self.save_done, failed=self.save_failed)
-        job.signals.progress.connect(self.progress.setValue)
+        self.message.setText(f'Saving {len(paths)} staged video(s)…')
+        job = self.submit(lambda progress: exporter.run(progress, self.item_saved.emit), self.save_done, failed=self.save_failed)
+        job.signals.progress.connect(self.save_progress)
 
-    def save_done(self, path):
+    def save_progress(self, value):
+        self.progress.setValue(value)
+        if self.exporter and self.exporter.current_source:
+            self.message.setText(f'Saving {self.exporter.current_source.name} — {value}% of batch')
+
+    def finish_save_ui(self):
         self.exporter = None
-        self.saved = path
-        self.settings[path] = Adjustments()
-        self.apply.setEnabled(True)
+        self.replace.setEnabled(True)
         self.progress.hide()
         self.cancel.hide()
-        self.open_saved.show()
-        self.message.setText('Saved: ' + str(path))
-        if path == self.source:
-            self.open(path)
+        self.update_staged_ui()
+
+    @Slot(object, object)
+    def save_item_done(self, entry, path):
+        self.processed_saves.add((entry.source, path))
+        self.saved = path
+        if path == entry.source:
+            self.settings[path] = Adjustments()
+            self.applied_settings.pop(path, None)
+            self.infos.pop(path, None)
+        else:
+            self.applied_settings[entry.source] = entry.settings
+            self.settings[path] = Adjustments()
+        self.update_staged_ui()
+
+    def save_done(self, result):
+        reload_current = False
+        for entry, path in result.saved:
+            if (entry.source, path) not in self.processed_saves:
+                self.save_item_done(entry, path)
+            reload_current |= path == entry.source == self.source
+        self.finish_save_ui()
+        self.open_saved.setVisible(bool(result.saved))
+        detail = f'Saved {len(result.saved)} video(s)'
+        if result.failed:
+            detail += f'; {len(result.failed)} failed (still staged)'
+        if result.cancelled:
+            detail += '; cancelled — remaining files are still staged'
+        self.message.setText(detail)
+        self.message.setToolTip('\n'.join(f'{path}: {error}' for path, error in result.failed))
+        if reload_current:
+            self.open(self.source, notice=detail)
+        elif self.source:
+            additions = [path for _, path in result.saved if path.parent == self.source.parent]
+            self.files = sorted(set(self.files + additions), key=natural_key)
+            self.populate()
 
     def save_failed(self, error):
-        self.exporter = None
-        self.apply.setEnabled(self.source is not None)
-        self.progress.hide()
-        self.cancel.hide()
+        self.finish_save_ui()
         self.report(error)
 
     def cancel_save(self):
@@ -574,7 +697,7 @@ def configure_application(app):
 
 def main():
     app = QApplication(sys.argv)
-    app.setApplicationName('Video Tint')
+    app.setApplicationName('ClipTweak')
     missing = [x for x in ['ffmpeg', 'ffprobe'] if not shutil.which(x)]
     if missing:
         QMessageBox.critical(None, 'Missing dependencies', 'Install: ' + ', '.join(missing))

@@ -1,9 +1,10 @@
 # Local repository and GitHub publication
 
-The application and project files are complete locally. GitHub publication was
-not possible in the build session: no GitHub CLI login or environment token was
-available, and a noninteractive lookup through the configured Git credential
-helper returned no GitHub credential. No public repository has been created.
+ClipTweak is complete and committed locally. GitHub CLI is installed and the
+user has logged in, but this managed workspace cannot connect to
+`api.github.com`. This prevents publication here; it does not establish that
+the user's credentials are invalid. Publish from a normal desktop terminal
+with the commands below. No public repository has been created by this session.
 
 This managed workspace exposes an empty, read-only `.git` placeholder. A normal
 `git init` fails with “Read-only file system.” The local repository is therefore
@@ -30,7 +31,7 @@ sudo pacman -S --needed github-cli
 gh auth login --hostname github.com --git-protocol https --web
 gh auth setup-git
 gh auth status --hostname github.com
-gh repo create video-tint --public --source=. --remote=origin --push
+gh repo create ClipTweak --public --source=. --remote=origin --push
 ```
 
 If `.git` remains protected outside the managed environment, first copy the
@@ -43,17 +44,17 @@ Do not include footage, cache files, corrected results, credentials, or `.venv`.
 licenses documented in `README.md`. No dependency binaries or credentials are
 stored in this repository.
 
-A portable `video-tint.bundle` is also supplied locally (and excluded from Git).
+A portable `cliptweak.bundle` is also supplied locally (and excluded from Git).
 If you prefer a fresh standard checkout instead of moving the metadata:
 
 ```sh
 mkdir -p "$HOME/Projects"
-git clone "/home/mth/Applications/Video adjuster/video-tint.bundle" "$HOME/Projects/video-tint"
-cd "$HOME/Projects/video-tint"
+git clone "/home/mth/Applications/Video adjuster/cliptweak.bundle" "$HOME/Projects/ClipTweak"
+cd "$HOME/Projects/ClipTweak"
 git remote remove origin
 sudo pacman -S --needed github-cli
 gh auth login --hostname github.com --git-protocol https --web
 gh auth setup-git
 gh auth status --hostname github.com
-gh repo create video-tint --public --source=. --remote=origin --push
+gh repo create ClipTweak --public --source=. --remote=origin --push
 ```

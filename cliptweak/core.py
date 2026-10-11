@@ -1,5 +1,6 @@
 """Shared color processing and transactional FFmpeg export; no Qt dependencies."""
 from dataclasses import asdict, dataclass
+from copy import deepcopy
 import json
 import math
 import os
@@ -281,8 +282,6 @@ class Exporter:
                 raise RuntimeError('Source changed while saving; output was not published')
             self.check_cancelled()
             if self.replace:
-                backup = unique_path(self.source, '_backup', self.source.suffix)
-                os.link(self.source, backup)
                 os.replace(temporary, self.source)
             else:
                 # Hard-link publication cannot overwrite a destination that appeared.
@@ -294,3 +293,47 @@ class Exporter:
             if temporary:
                 temporary.unlink(missing_ok=True)
             lock.unlink(missing_ok=True)
+
+
+@dataclass
+class StagedVideo:
+    source: Path
+    settings: Adjustments
+    info: dict
+
+
+@dataclass
+class BatchResult:
+    saved: list
+    failed: list
+    cancelled: bool
+
+
+class BatchExporter:
+    """Immutable sequential batch; failures do not discard other staged files."""
+    def __init__(self, entries, replace=False):
+        self.entries = tuple(StagedVideo(Path(entry.source),
+            Adjustments(**asdict(entry.settings)), deepcopy(entry.info)) for entry in entries)
+        self.replace = replace
+        self.cancelled = threading.Event()
+        self.current_source = None
+
+    def run(self, progress=lambda value: None, file_done=lambda entry, target: None):
+        saved, failed = [], []
+        total = len(self.entries)
+        for index, entry in enumerate(self.entries):
+            if self.cancelled.is_set():
+                break
+            self.current_source = entry.source
+            exporter = Exporter(entry.source, entry.settings, entry.info, self.replace)
+            exporter.cancelled = self.cancelled
+            try:
+                target = exporter.run(lambda value: progress(int((index*100 + value)/total)))
+                saved.append((entry, target))
+                file_done(entry, target)
+            except Exception as error:
+                if self.cancelled.is_set():
+                    break
+                failed.append((entry.source, str(error)))
+                progress(int((index+1)*100/total))
+        return BatchResult(saved, failed, self.cancelled.is_set())
