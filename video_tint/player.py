@@ -1,0 +1,147 @@
+"""Small ctypes libmpv binding. All decode/render work lives on a worker thread."""
+import ctypes as C
+import ctypes.util
+import os
+import queue
+import threading
+import time
+from PySide6.QtCore import QThread, Signal
+from PySide6.QtGui import QImage
+
+# Values from the public libmpv client/render headers.
+API_TYPE, SW_SIZE, SW_FORMAT, SW_STRIDE, SW_POINTER = 1, 17, 18, 19, 20
+FORMAT_FLAG, FORMAT_DOUBLE = 3, 5
+EVENT_NONE, EVENT_LOG_MESSAGE, EVENT_END_FILE = 0, 2, 7
+
+
+class Param(C.Structure):
+    _fields_ = [('type', C.c_int), ('data', C.c_void_p)]
+
+class Event(C.Structure):
+    _fields_ = [('event_id', C.c_int), ('error', C.c_int), ('reply_userdata', C.c_uint64), ('data', C.c_void_p)]
+
+class EndFile(C.Structure):
+    _fields_ = [('reason', C.c_int), ('error', C.c_int)]
+
+class Log(C.Structure):
+    _fields_ = [('prefix', C.c_char_p), ('level', C.c_char_p), ('text', C.c_char_p)]
+
+class Player(QThread):
+    frame = Signal(QImage)
+    status = Signal(float, float, bool)
+    error = Signal(str)
+
+    def __init__(self):
+        super().__init__()
+        self.commands = queue.Queue()
+        self.running = True
+        self.size = (960, 540)
+
+    def command(self, *args):
+        self.commands.put(tuple((str(x) for x in args)))
+
+    def run(self):
+        ctx = handle = control = None
+        try:
+            lib = C.CDLL(ctypes.util.find_library('mpv') or 'libmpv.so.2')
+
+            def bind(name, restype, *args):
+                f = getattr(lib, name)
+                f.restype = restype
+                f.argtypes = list(args)
+                return f
+            create = bind('mpv_create', C.c_void_p)
+            option = bind('mpv_set_option_string', C.c_int, C.c_void_p, C.c_char_p, C.c_char_p)
+            init = bind('mpv_initialize', C.c_int, C.c_void_p)
+            command = bind('mpv_command', C.c_int, C.c_void_p, C.POINTER(C.c_char_p))
+            get = bind('mpv_get_property', C.c_int, C.c_void_p, C.c_char_p, C.c_int, C.c_void_p)
+            render_create = bind('mpv_render_context_create', C.c_int, C.POINTER(C.c_void_p), C.c_void_p, C.POINTER(Param))
+            render = bind('mpv_render_context_render', C.c_int, C.c_void_p, C.POINTER(Param))
+            update = bind('mpv_render_context_update', C.c_uint64, C.c_void_p)
+            free = bind('mpv_render_context_free', None, C.c_void_p)
+            destroy = bind('mpv_terminate_destroy', None, C.c_void_p)
+            wait_event = bind('mpv_wait_event', C.POINTER(Event), C.c_void_p, C.c_double)
+            request_logs = bind('mpv_request_log_messages', C.c_int, C.c_void_p, C.c_char_p)
+            error_string = bind('mpv_error_string', C.c_char_p, C.c_int)
+            handle = create()
+            if not handle:
+                raise RuntimeError('Could not create a libmpv player')
+            for k, v in {'vo': 'libmpv', 'hwdec': 'no', 'config': 'no', 'idle': 'yes', 'keep-open': 'yes', 'audio-display': 'no', 'deinterlace': 'no', 'input-default-bindings': 'no'}.items():
+                if option(handle, k.encode(), v.encode()) < 0:
+                    raise RuntimeError('Unsupported mpv option: ' + k)
+            if os.environ.get('VIDEOTINT_TEST_AUDIO') == 'null':
+                option(handle, b'ao', b'null')
+            if init(handle) < 0:
+                raise RuntimeError('Could not initialize libmpv')
+            request_logs(handle, b'error')
+            ctx = C.c_void_p()
+            if render_create(C.byref(ctx), handle, (Param * 2)(Param(API_TYPE, C.cast(C.c_char_p(b'sw'), C.c_void_p)), Param(0, None))) < 0:
+                raise RuntimeError('libmpv software renderer unavailable')
+
+            def control_loop():
+                """Never block the render thread on normal libmpv commands or properties."""
+                last_status = 0
+                while self.running:
+                    while not self.commands.empty() and self.running:
+                        args = self.commands.get()
+                        arr = (C.c_char_p * (len(args) + 1))(*(x.encode() for x in args), None)
+                        rc = command(handle, arr)
+                        if rc < 0:
+                            self.error.emit(f'{args[0]}: {error_string(rc).decode()}')
+                    while self.running:
+                        event = wait_event(handle, 0).contents
+                        if event.event_id == EVENT_NONE:
+                            break
+                        if event.event_id == EVENT_END_FILE and event.data:
+                            end = C.cast(event.data, C.POINTER(EndFile)).contents
+                            if end.error < 0:
+                                self.error.emit('Playback failed: ' + error_string(end.error).decode())
+                        elif event.event_id == EVENT_LOG_MESSAGE and event.data:
+                            log = C.cast(event.data, C.POINTER(Log)).contents
+                            self.error.emit(f"{log.prefix.decode(errors='replace')}: {log.text.decode(errors='replace').strip()}")
+                    if time.monotonic() - last_status > 0.2:
+                        pos = C.c_double()
+                        duration = C.c_double()
+                        pause = C.c_int()
+                        get(handle, b'time-pos', FORMAT_DOUBLE, C.byref(pos))
+                        get(handle, b'duration', FORMAT_DOUBLE, C.byref(duration))
+                        get(handle, b'pause', FORMAT_FLAG, C.byref(pause))
+                        self.status.emit(pos.value, duration.value, bool(pause.value))
+                        last_status = time.monotonic()
+                    time.sleep(0.02)
+            # Rendering must keep servicing requests while control calls block.
+            control = threading.Thread(target=control_loop, name='mpv-control')
+            control.start()
+            last_size = None
+            while self.running:
+                size = self.size
+                changed = size != last_size
+                if changed:
+                    w, h = size
+                    stride = (w * 4 + 63) // 64 * 64
+                    raw = C.create_string_buffer(stride * h + 64)
+                    ptr = (C.addressof(raw) + 63) & ~63
+                    dims = (C.c_int * 2)(w, h)
+                    pitch = C.c_size_t(stride)
+                    params = (Param * 5)(Param(SW_SIZE, C.cast(dims, C.c_void_p)), Param(SW_FORMAT, C.cast(C.c_char_p(b'bgr0'), C.c_void_p)), Param(SW_STRIDE, C.cast(C.pointer(pitch), C.c_void_p)), Param(SW_POINTER, ptr), Param(0, None))
+                    last_size = size
+                if update(ctx) & 1 or changed:
+                    if render(ctx, params) < 0:
+                        raise RuntimeError('Video rendering failed')
+                    img = QImage(C.string_at(ptr, stride * h), w, h, stride, QImage.Format.Format_RGB32).copy()
+                    self.frame.emit(img)
+                self.msleep(15)
+        except Exception as e:
+            self.error.emit(str(e))
+        finally:
+            self.running = False
+            if ctx:
+                free(ctx)
+            if control:
+                control.join()
+            if handle:
+                destroy(handle)
+
+    def stop(self):
+        self.running = False
+        self.wait()

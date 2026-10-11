@@ -1,0 +1,27 @@
+__pycache__/
+*.py[cod]
+.venv/
+*.egg-info/
+build/
+dist/
+.pytest_cache/
+.env*
+.aws/
+.codex/
+.agents/
+.video-tint-git/
+# Footage and generated results, including mixed-case camera extensions.
+*.[mM][pP]4
+*.[mM][tT][sS]
+*.[mM]2[tT][sS]
+*.[mM][oO][vV]
+*.[mM][kK][vV]
+*.[aA][vV][iI]
+*.[wW][eE][bB][mM]
+*.[mM]4[vV]
+*.[jJ][pP][gG]
+*.[pP][nN][gG]
+*.videotint-lock
+.videotint-*
+/core
+/core.*

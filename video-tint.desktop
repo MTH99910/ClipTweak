@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Video Tint
+Comment=Watch and color-correct a video
+Exec=video-tint %f
+Icon=video-x-generic
+Terminal=false
+Categories=AudioVideo;Video;Player;
+MimeType=video/mp4;video/mp2t;video/x-matroska;video/quicktime;
