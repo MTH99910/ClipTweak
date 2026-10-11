@@ -27,3 +27,9 @@ dist/
 /core.*
 
 *.bundle
+
+# Application artwork is source, not generated footage.
+!cliptweak/resources/cliptweak.png
+
+# One-time local migration helper; not part of the published application.
+/finish-setup.sh

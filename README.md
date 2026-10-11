@@ -43,8 +43,9 @@ For a launcher in KDE's application menu:
 ./scripts/install-desktop.sh
 ```
 
-This installs a desktop entry pointing at this checkout, including paths with
-spaces. Keep the checkout in place. To uninstall the entry, remove
+This installs a desktop entry pointing at this checkout and copies the bundled
+ClipTweak PNG to the user icon directory. Both KDE and the application window
+use this icon, including when paths contain spaces. Keep the checkout in place. To uninstall the entry, remove
 `~/.local/share/applications/cliptweak.desktop` (or the corresponding
 `$XDG_DATA_HOME` location).
 
@@ -308,9 +309,9 @@ QT_QPA_PLATFORM=offscreen CLIPTWEAK_AUDIO=null \
 XDG_CACHE_HOME=/tmp/cliptweak-test-cache python scripts/batch_smoke_test.py --replace
 ```
 
-The original `./video-tint` launcher still forwards to ClipTweak so existing
-shortcuts continue to work. Run `./scripts/install-desktop.sh` for a menu entry
-with the new name.
+Run `./scripts/install-desktop.sh` after moving or renaming the checkout so the
+menu entry points at its new location. The obsolete Video Tint launcher has
+been removed; use `./cliptweak-launcher` or the installed `cliptweak` command.
 
 ## License and dependencies
 

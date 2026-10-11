@@ -692,6 +692,8 @@ class Window(QMainWindow):
         event.accept()
 
 def configure_application(app):
+    app.setDesktopFileName('cliptweak')
+    app.setWindowIcon(QIcon(str(Path(__file__).parent / 'resources' / 'cliptweak.png')))
     app.setStyle('Fusion')
     app.setStyleSheet('QWidget { background:#202227; color:#e5e7eb; } QPushButton { background:#343841; border:1px solid #505660; padding:7px; border-radius:4px; } QPushButton:hover { background:#454c58; } QPushButton:disabled { color:#777; } QSlider::groove:horizontal { height:5px; background:#4b515a; } QSlider::handle:horizontal { width:14px; margin:-5px 0; background:#83b7ee; border-radius:7px; } QPushButton#apply { background:#2868a9; font-weight:bold; padding:10px 32px; } QWidget#browser { background:#2b2e35; border:1px solid #555; } QListWidget::item:selected { background:#2868a9; }')
 
