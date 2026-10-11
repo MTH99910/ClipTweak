@@ -94,21 +94,57 @@ def color_matrix(video):
     )
 
 
+def white_balance_gains(a):
+    """Logarithmic RGB balance: warm raises R/B; magenta lowers G/RB."""
+    return (math.exp(.25 * a.temperature + .15 * a.tint),
+            math.exp(-.30 * a.tint),
+            math.exp(-.25 * a.temperature + .15 * a.tint))
+
+
 def filter_graph(a, interlaced=False, color_range='tv', parity='auto', matrix='bt601'):
-    """Photo-style controls with explicit, symmetric YUV/RGB conversions."""
-    temperature, tint = a.temperature * .12, a.tint * .10
-    balance = {'rm': temperature + tint / 2, 'gm': -tint, 'bm': -temperature + tint / 2}
+    """Shared 16-bit SDR curves, with exact neutral bypass and explicit range.
+
+    Channel balance uses a bounded gain curve x*g/(1+(g-1)*x). It has the
+    requested multiplicative slope in shadows, keeps black black, and rolls
+    smoothly into highlights instead of clipping them. Brightness is a gentle
+    exposure-like gain; contrast works around middle gray and gamma on RGB.
+    """
     filters = []
     if interlaced:
         filters.append(f'bwdif=mode=send_frame:parity={parity}:deint=all')
+    if a == Adjustments():
+        return ','.join(filters) or 'null'
+    source_range = 'full' if color_range == 'pc' else 'limited'
     filters.extend([
-        f'eq=brightness={a.brightness:.6f}:contrast={a.contrast:.6f}:'
-        f'gamma={a.gamma:.6f}:saturation={a.saturation:.6f}',
-        f'scale=in_color_matrix={matrix}:out_range=full',
-        'format=gbrp',
-        'colorbalance=' + ':'.join(f'{k}={v + 0.0:.6f}' for k, v in balance.items()) + ':pl=1',
-        f'scale=out_color_matrix={matrix}:out_range={"full" if color_range == "pc" else "limited"}',
+        f'scale=in_color_matrix={matrix}:in_range={source_range}:out_range=full:flags=bicubic+accurate_rnd+full_chroma_int',
+        'format=gbrp16le',
+    ])
+    curves = []
+    for channel, gain in zip('rgb', white_balance_gains(a)):
+        gain *= 2 ** (a.brightness * 2)
+        x = '(val/65535)'
+        if a.contrast != 1:
+            x = f'(pow({x},{a.contrast:.6f})/(pow({x},{a.contrast:.6f})+pow(1-{x},{a.contrast:.6f})))'
+        if a.gamma != 1:
+            x = f'pow({x},{1/a.gamma:.6f})'
+        curves.append(f"{channel}='65535*({x}*{gain:.9f}/(1+({gain:.9f}-1)*{x}))'")
+    filters.append('lutrgb=' + ':'.join(curves))
+    if a.saturation != 1:
+        # RGB luminance-preserving saturation, using source primaries' weights.
+        weights = {'bt709': (.2126, .7152, .0722),
+                   'bt2020': (.2627, .6780, .0593),
+                   'smpte240m': (.212, .701, .087)}.get(matrix, (.299, .587, .114))
+        coefficients = []
+        for row, output in enumerate('rgb'):
+            for col, input_channel in enumerate('rgb'):
+                value = (1-a.saturation)*weights[col] + (a.saturation if row == col else 0)
+                coefficients.append(f'{output}{input_channel}={value:.9f}')
+        filters.append('colorchannelmixer=' + ':'.join(coefficients))
+    filters.extend([
+        f'scale=in_range=full:out_color_matrix={matrix}:out_range={source_range}:flags=bicubic+accurate_rnd+full_chroma_int',
         'format=yuv420p',
+        'setparams=range=' + source_range + ':colorspace=' +
+        {'bt601': 'smpte170m', 'bt2020': 'bt2020nc'}.get(matrix, matrix),
     ])
     return ','.join(filters)
 

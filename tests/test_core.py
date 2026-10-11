@@ -6,15 +6,20 @@ from video_tint.core import Adjustments, Exporter, filter_graph, natural_key, pr
 class CoreTests(unittest.TestCase):
 
     def test_neutral_and_mapping(self):
-        graph = filter_graph(Adjustments())
-        self.assertIn('brightness=0.000000:contrast=1.000000:gamma=1.000000:saturation=1.000000', graph)
-        self.assertIn('rm=0.000000:gm=0.000000:bm=0.000000', graph)
-        warm = filter_graph(Adjustments(temperature=1))
-        self.assertIn('rm=0.120000:gm=0.000000:bm=-0.120000', warm)
-        magenta = filter_graph(Adjustments(tint=1))
-        self.assertIn('rm=0.050000:gm=-0.100000:bm=0.050000', magenta)
-        self.assertLess(graph.index('eq='), graph.index('colorbalance='))
-        self.assertTrue(filter_graph(Adjustments(), True).startswith('bwdif=mode=send_frame'))
+        self.assertEqual(filter_graph(Adjustments()), 'null')
+        self.assertEqual(filter_graph(Adjustments(), True),
+                         'bwdif=mode=send_frame:parity=auto:deint=all')
+        graph = filter_graph(Adjustments(temperature=1))
+        self.assertIn('format=gbrp16le', graph)
+        self.assertIn('in_range=limited', graph)
+        self.assertNotIn('colorbalance', graph)
+        from video_tint.core import white_balance_gains
+        r, g, b = white_balance_gains(Adjustments(temperature=1))
+        self.assertGreater(r, g)
+        self.assertGreater(g, b)
+        r, g, b = white_balance_gains(Adjustments(tint=1))
+        self.assertGreater(r, g)
+        self.assertEqual(r, b)
 
     def test_names_and_natural_order(self):
         with tempfile.TemporaryDirectory() as d:

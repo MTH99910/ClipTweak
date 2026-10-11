@@ -463,17 +463,24 @@ class Window(QMainWindow):
         for s, _, neutral in self.sliders.values():
             s.setValue(neutral)
 
+    def grade_filter(self):
+        info = dict(self.info, interlaced=False)
+        graph = 'null' if self.comparing else processing_graph(self.current(), info)
+        return '@grade:lavfi=[' + graph + ']'
+
     def preview_filter(self):
-        if self.comparing:
-            if not self.info['interlaced']:
-                return ''
+        filters = []
+        if self.info['interlaced']:
             parity = self.info.get('detected_parity', 'auto')
-            return f'@grade:lavfi=[bwdif=mode=send_frame:parity={parity}:deint=all]'
-        return '@grade:lavfi=[' + processing_graph(self.current(), self.info) + ']'
+            filters.append(f'@deint:lavfi=[bwdif=mode=send_frame:parity={parity}:deint=all]')
+        filters.append(self.grade_filter())
+        return ','.join(filters)
 
     def update_filter(self):
         if self.info:
-            self.player.command('set', 'vf', self.preview_filter())
+            # Replace only the labelled color filter. Preserve BWDIF's temporal
+            # history while dragging sliders, and redraw paused frames via mpv.
+            self.player.command('vf', 'add', self.grade_filter())
 
     def compare_original(self, enabled):
         self.comparing = enabled

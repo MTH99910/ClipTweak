@@ -89,7 +89,7 @@ class Player(QThread):
             if not handle:
                 raise RuntimeError('Could not create a libmpv player ' +
                                    '(numeric locale: ' + locale.setlocale(locale.LC_NUMERIC) + ')')
-            for k, v in {'vo': 'libmpv', 'hwdec': 'no', 'config': 'no', 'idle': 'yes', 'keep-open': 'yes', 'audio-display': 'no', 'deinterlace': 'no', 'input-default-bindings': 'no'}.items():
+            for k, v in {'vo': 'libmpv', 'hwdec': 'no', 'sws-allow-zimg': 'no', 'sws-scaler': 'bicubic', 'config': 'no', 'idle': 'yes', 'keep-open': 'yes', 'audio-display': 'no', 'deinterlace': 'no', 'input-default-bindings': 'no'}.items():
                 if option(handle, k.encode(), v.encode()) < 0:
                     raise RuntimeError('Unsupported mpv option: ' + k)
             self.diagnostics['stage'] = 'Checking audio'

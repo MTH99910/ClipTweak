@@ -21,7 +21,7 @@ cd "/path/to/Video adjuster"
 ```
 
 Python 3.10+, PySide6 6.6+, libmpv with the software render API, and FFmpeg 6+
-with `libx264`, `eq`, `colorbalance`, `scale`, `bwdif`, and `idet` are required.
+with `libx264`, `lutrgb`, `colorchannelmixer`, `scale`, `setparams`, `bwdif`, and `idet` are required.
 The tested environment has Python 3.14, Qt/PySide6 6.11, FFmpeg 9, and libmpv
 client API 2.5. No `python-mpv` package is needed: a small ctypes binding is
 included.
@@ -98,8 +98,8 @@ declare the Python dependency.
 - Brightness defaults to 0; contrast, gamma, and saturation to 1; tint and
   temperature to 0. Each slider has a reset, plus **Reset all**.
 - Positive tint adds magenta relative to green; positive temperature warms the
-  image by increasing red relative to blue. These adjust RGB midtones with
-  lightness preservation, rather than rotating hue. They are subjective photo
+  image by increasing red relative to blue. These apply logarithmic RGB channel balance with
+  smooth highlight rolloff and preserved black. They are subjective photo
   adjustments, not calibrated Kelvin or RAW white-balance controls.
 - Hold **Hold to compare original**, or press **C** to toggle the original.
   Interlaced originals are still deinterlaced for a useful comparison.
@@ -160,17 +160,24 @@ Replacing the currently viewed source reloads the saved video at neutral.
 Preview and saving call the same `processing_graph()` function:
 
 1. Interlaced footage: BWDIF, `send_frame`, preserving the original frame rate.
-2. FFmpeg `eq`: brightness, contrast, gamma, saturation.
-3. Explicit YUV-to-RGB conversion using the source color matrix.
-4. FFmpeg `colorbalance`: temperature and tint midtone channel adjustments.
-5. RGB-to-YUV conversion using that same matrix and source range, then YUV 4:2:0.
+   Its preview filter stays in place while the separate color filter changes.
+2. Neutral settings bypass color processing completely; progressive decoded
+   YUV pixels remain unchanged, including their chroma and range.
+3. For adjustments, explicitly convert source YUV to full-range 16-bit RGB.
+4. Apply RGB contrast/gamma curves and gentle exposure-like brightness, with
+   logarithmic temperature/tint gains and smooth highlight rolloff via `lutrgb`.
+   Warm increases red relative to blue; magenta decreases green relative to
+   red/blue. These balance channels across the image, preserving black, rather
+   than adding colored midtone offsets or rotating hue.
+5. Apply luminance-preserving RGB saturation with `colorchannelmixer`.
+6. Convert once to 8-bit YUV 4:2:0 using the source matrix/range. Both conversion
+   directions specify their scaling flags; output frames explicitly declare
+   the resulting range and matrix so mpv cannot infer a conflicting one.
 
 Known color-matrix, range, primaries, and transfer tags are retained. Full-range
-footage stays full-range. Untagged SDR uses a documented assumption: BT.709 above
-576 lines, BT.601 otherwise; output gets that matrix tag. Unknown range is
-assumed limited, as is usual for AVCHD. There is no forced BT.709 conversion of
-correctly tagged SD footage. The neutral adjustment graph still traverses RGB;
-**original comparison** bypasses correction and that RGB round trip.
+footage stays full-range. Untagged SDR uses BT.709 above 576 lines and BT.601
+otherwise; output gets that matrix tag. Unknown range is assumed limited, as is
+usual for AVCHD. Original comparison retains the same deinterlacing decision.
 
 Field order is inspected off the UI thread. Stream metadata determines whether
 to deinterlace; when missing, FFmpeg `idet` examines up to 120 frames and chooses
@@ -200,8 +207,9 @@ attachments, extra video streams, and camera sidecars are not preserved.
   high-bit-depth input loses precision. This is not a managed HDR grading tool.
 - Preview/output use identical color processing, but H.264 is lossy and mpv's
   final display scaling/color conversion can differ slightly from FFmpeg's.
-  Generated progressive and interlaced preview-versus-saved-frame smoke tests
-  measured SSIM above 0.98;
+  Generated progressive/interlaced smoke tests compare both videos through
+  mpv: unencoded filter references require SSIM >0.98; lossy H.264 output
+  requires SSIM >0.93 and PSNR >38 dB (flat saturated bars amplify SSIM errors);
   bit-identical display output is not claimed.
 - Sliders update the paused or playing frame without reloading the file or
   seeking. Updates are debounced by 70 ms; filter rebuilding can briefly stall
@@ -248,7 +256,7 @@ BT.709 tags, real interlaced H.264 MTS and remuxed MP4, missing-field-metadata
 
 The GUI smoke test checks the actual painted Qt preview surface and plays through libmpv, changes a paused frame without
 moving position, saves through the UI, compares a preview screenshot with a
-decoded saved frame using SSIM, checks asynchronous thumbnails/natural folder
+decoded saved frame through the same mpv RGB converter using SSIM and PSNR, checks asynchronous thumbnails/natural folder
 ordering, reopens the saved result, and checks per-file settings and export
 snapshot isolation. `VIDEOTINT_TEST_AUDIO=null` is a test-only silent audio
 backend; remove it for ordinary playback.
@@ -259,7 +267,10 @@ desktop audio server. Visible Plasma/Wayland behavior, audible playback, and RX 
 performance therefore still need a local check. A subsequent regression check
 played actual Sony NEX-5 MTS footage from the local Videos folder read-only, with
 the production stylesheet, GUI-thread frame delivery, and the diagnostic display
-test. The original footage was not modified.
+test. A further check played `00023.mp4` while repeatedly changing temperature and
+tint (241 rendered frames in eight seconds, no playback errors). Pixel tests
+verify neutral YUV identity, both balance directions, preserved black/highlights,
+and gentle, near-monotonic gradients. The original footage was not modified.
 
 ## License and dependencies
 
