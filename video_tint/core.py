@@ -96,9 +96,9 @@ def color_matrix(video):
 
 def white_balance_gains(a):
     """Logarithmic RGB balance: warm raises R/B; magenta lowers G/RB."""
-    return (math.exp(.25 * a.temperature + .15 * a.tint),
-            math.exp(-.30 * a.tint),
-            math.exp(-.25 * a.temperature + .15 * a.tint))
+    return (math.exp(.75 * a.temperature + .45 * a.tint),
+            math.exp(-.90 * a.tint),
+            math.exp(-.75 * a.temperature + .45 * a.tint))
 
 
 def filter_graph(a, interlaced=False, color_range='tv', parity='auto', matrix='bt601'):
@@ -121,7 +121,7 @@ def filter_graph(a, interlaced=False, color_range='tv', parity='auto', matrix='b
     ])
     curves = []
     for channel, gain in zip('rgb', white_balance_gains(a)):
-        gain *= 2 ** (a.brightness * 2)
+        gain *= 2 ** (a.brightness * 6)
         x = '(val/65535)'
         if a.contrast != 1:
             x = f'(pow({x},{a.contrast:.6f})/(pow({x},{a.contrast:.6f})+pow(1-{x},{a.contrast:.6f})))'

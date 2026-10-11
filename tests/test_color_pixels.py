@@ -36,7 +36,7 @@ class ColorPixelTests(unittest.TestCase):
     def test_small_adjustments_are_gentle_and_gradients_monotonic(self):
         levels = tuple(range(16, 236))
         baseline = self.pixels(Adjustments(), levels)
-        for key, value in [('brightness', .05), ('temperature', .1), ('tint', .1),
+        for key, value in [('brightness', .02), ('temperature', .03), ('tint', .03),
                            ('gamma', 1.05), ('contrast', 1.05)]:
             result = self.pixels(Adjustments(**{key: value}), levels)
             self.assertLess(max(abs(a-b) for old, new in zip(baseline, result)
@@ -45,6 +45,17 @@ class ColorPixelTests(unittest.TestCase):
                 values = [p[channel] for p in result]
                 self.assertTrue(all(b >= a-2 for a, b in zip(values, values[1:])), key)
                 self.assertGreater(len(set(values)), 190, key)
+
+    def test_extremes_have_useful_correction_strength(self):
+        baseline = self.pixels(Adjustments())[2]
+        bright = self.pixels(Adjustments(brightness=.5))[2]
+        dark = self.pixels(Adjustments(brightness=-.5))[2]
+        self.assertGreater(bright[0] - baseline[0], 75)
+        self.assertGreater(baseline[0] - dark[0], 75)
+        warm = self.pixels(Adjustments(temperature=1))[2]
+        magenta = self.pixels(Adjustments(tint=1))[2]
+        self.assertGreater(warm[0] - warm[2], 75)
+        self.assertGreater(min(magenta[0], magenta[2]) - magenta[1], 65)
 
     def test_neutral_does_not_change_yuv_samples(self):
         raw = bytes(range(256)) * 3

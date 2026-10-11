@@ -99,7 +99,9 @@ declare the Python dependency.
   temperature to 0. Each slider has a reset, plus **Reset all**.
 - Positive tint adds magenta relative to green; positive temperature warms the
   image by increasing red relative to blue. These apply logarithmic RGB channel balance with
-  smooth highlight rolloff and preserved black. They are subjective photo
+  smooth highlight rolloff and preserved black. Brightness spans an
+  exposure-like gain of ±3 stops; brightness, tint, and temperature have three
+  times the adjustment strength of version 0.1.3. They are subjective photo
   adjustments, not calibrated Kelvin or RAW white-balance controls.
 - Hold **Hold to compare original**, or press **C** to toggle the original.
   Interlaced originals are still deinterlaced for a useful comparison.

@@ -27,7 +27,9 @@ if [ -d .video-tint-git ] && [ ! -f .git/HEAD ]; then
 fi
 git status
 sudo pacman -S --needed github-cli
-gh auth login
+gh auth login --hostname github.com --git-protocol https --web
+gh auth setup-git
+gh auth status --hostname github.com
 gh repo create video-tint --public --source=. --remote=origin --push
 ```
 
@@ -50,6 +52,8 @@ git clone "/home/mth/Applications/Video adjuster/video-tint.bundle" "$HOME/Proje
 cd "$HOME/Projects/video-tint"
 git remote remove origin
 sudo pacman -S --needed github-cli
-gh auth login
+gh auth login --hostname github.com --git-protocol https --web
+gh auth setup-git
+gh auth status --hostname github.com
 gh repo create video-tint --public --source=. --remote=origin --push
 ```
