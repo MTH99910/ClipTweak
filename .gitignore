@@ -25,3 +25,5 @@ dist/
 .videotint-*
 /core
 /core.*
+
+*.bundle

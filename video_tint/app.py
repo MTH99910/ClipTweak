@@ -143,8 +143,8 @@ class Window(QMainWindow):
             ('contrast', 'Contrast', 50, 200, 100, 100),
             ('gamma', 'Gamma', 40, 250, 100, 100),
             ('saturation', 'Saturation', 0, 200, 100, 100),
-            ('tint', 'Green ↔ Magenta', -100, 100, 0, 100),
-            ('temperature', 'Cool ↔ Warm', -100, 100, 0, 100),
+            ('tint', 'Tint\nGreen ↔ Magenta', -100, 100, 0, 100),
+            ('temperature', 'Temperature\nCool ↔ Warm', -100, 100, 0, 100),
         ]
         for key, label, low, high, neutral, scale in specs:
             column = QVBoxLayout()
@@ -284,6 +284,7 @@ class Window(QMainWindow):
             self.source = path
             self.settings.setdefault(path, Adjustments())
             self.comparing = False
+            self.compare.setText('Hold to compare original')
             self.restore()
             self.player.command('set', 'vf', self.preview_filter())
             self.player.command('loadfile', str(path), 'replace')

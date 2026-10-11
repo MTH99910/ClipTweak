@@ -40,3 +40,16 @@ Do not include footage, cache files, corrected results, credentials, or `.venv`.
 `LICENSE` covers application code; third-party dependencies have separate
 licenses documented in `README.md`. No dependency binaries or credentials are
 stored in this repository.
+
+A portable `video-tint.bundle` is also supplied locally (and excluded from Git).
+If you prefer a fresh standard checkout instead of moving the metadata:
+
+```sh
+mkdir -p "$HOME/Projects"
+git clone "/home/mth/Applications/Video adjuster/video-tint.bundle" "$HOME/Projects/video-tint"
+cd "$HOME/Projects/video-tint"
+git remote remove origin
+sudo pacman -S --needed github-cli
+gh auth login
+gh repo create video-tint --public --source=. --remote=origin --push
+```
