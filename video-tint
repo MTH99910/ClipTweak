@@ -1,4 +1,0 @@
-#!/usr/bin/env bash
-# Compatibility for existing desktop shortcuts; the app is now ClipTweak.
-set -e
-exec "$(dirname -- "$(readlink -f -- "$0")")/cliptweak-launcher" "$@"
